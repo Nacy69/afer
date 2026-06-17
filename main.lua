@@ -22,7 +22,7 @@ local Window = Fluent:CreateWindow({
 	Title = "Auto Teleporter",
 	SubTitle = "Entity Selector",
 	TabWidth = 160,
-	Size = UDim2.fromOffset(500, 520),
+	Size = UDim2.fromOffset(520, 600),
 	Acrylic = true, 
 	Theme = "Dark",
 	MinimizeKey = Enum.KeyCode.RightControl
@@ -82,7 +82,7 @@ local SpeedSlider = Tabs.Main:AddSlider("SpeedSlider", {
 	Description = "How fast you glide (studs/sec). Only for Tween mode.",
 	Default = 50,
 	Min = 10,
-	Max = 300,
+	Max = 500,
 	Rounding = 1,
 	Callback = function(Value)
 		tweenSpeed = Value
@@ -92,6 +92,22 @@ local SpeedSlider = Tabs.Main:AddSlider("SpeedSlider", {
 SpeedSlider:OnChanged(function(Value)
 	tweenSpeed = Value
 end)
+
+-- Input field for Tween Speed
+local SpeedInput = Tabs.Main:AddInput("SpeedInput", {
+	Title = "Type Exact Tween Speed",
+	Default = "50",
+	Placeholder = "Enter speed...",
+	Numeric = true,
+	Finished = true,
+	Callback = function(Value)
+		local num = tonumber(Value)
+		if num then
+			tweenSpeed = num
+			SpeedSlider:SetValue(num)
+		end
+	end
+})
 
 -- Slider for Distance
 local DistanceSlider = Tabs.Main:AddSlider("DistanceSlider", {
@@ -109,6 +125,22 @@ local DistanceSlider = Tabs.Main:AddSlider("DistanceSlider", {
 DistanceSlider:OnChanged(function(Value)
 	teleportDistance = Value
 end)
+
+-- Input field for Distance
+local DistanceInput = Tabs.Main:AddInput("DistanceInput", {
+	Title = "Type Exact Attack Distance",
+	Default = "5",
+	Placeholder = "Enter distance...",
+	Numeric = true,
+	Finished = true,
+	Callback = function(Value)
+		local num = tonumber(Value)
+		if num then
+			teleportDistance = num
+			DistanceSlider:SetValue(num)
+		end
+	end
+})
 
 -- Dropdown for Position
 local PositionDropdown = Tabs.Main:AddDropdown("PositionDropdown", {
