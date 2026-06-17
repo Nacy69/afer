@@ -29,7 +29,8 @@ local Window = Fluent:CreateWindow({
 })
 
 local Tabs = {
-	Main = Window:AddTab({ Title = "Main", Icon = "home" })
+	Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" })
 }
 
 -- Toggle for auto teleport
@@ -290,6 +291,78 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			-- Reset velocity to prevent falling/flinging during the tween
 			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 			rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		end
+	end
+end)
+
+-- ==========================================
+-- AUTO KEY TAB
+-- ==========================================
+local isAutoKeyEnabled = false
+local autoKeyDelay = 0.1
+local selectedKeys = {}
+
+local AutoKeyToggle = Tabs.AutoKey:AddToggle("AutoKeyToggle", {
+	Title = "Enable Auto Key", 
+	Default = false 
+})
+
+AutoKeyToggle:OnChanged(function(Value)
+	isAutoKeyEnabled = Value
+end)
+
+local alphabetList = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+
+local KeysDropdown = Tabs.AutoKey:AddDropdown("KeysDropdown", {
+	Title = "Select Keys",
+	Description = "Select which alphabet keys to auto press",
+	Values = alphabetList,
+	Multi = true,
+	Default = {},
+})
+
+KeysDropdown:OnChanged(function(Value)
+	selectedKeys = Value
+end)
+
+local KeyDelaySlider = Tabs.AutoKey:AddSlider("KeyDelaySlider", {
+	Title = "Key Press Delay",
+	Description = "Delay between each cycle of key presses (in seconds)",
+	Default = 0.1,
+	Min = 0.01,
+	Max = 5,
+	Rounding = 2,
+	Callback = function(Value)
+		autoKeyDelay = Value
+	end
+})
+
+KeyDelaySlider:OnChanged(function(Value)
+	autoKeyDelay = Value
+end)
+
+task.spawn(function()
+	while true do
+		if isAutoKeyEnabled then
+			local pressedAny = false
+			for key, isSelected in pairs(selectedKeys) do
+				if isSelected then
+					pressedAny = true
+					local keyCode = Enum.KeyCode[key]
+					if keyCode then
+						VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+						task.wait(0.01)
+						VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+					end
+				end
+			end
+			if pressedAny then
+				task.wait(autoKeyDelay)
+			else
+				task.wait(0.1)
+			end
+		else
+			task.wait(0.1)
 		end
 	end
 end)
