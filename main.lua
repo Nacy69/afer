@@ -6,6 +6,7 @@ local player = Players.LocalPlayer
 local clientEntities = workspace:WaitForChild("ClientEntities")
 
 local WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/MobWaypoints.json" -- Replace with your raw JSON URL
+local BOSS_WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/BossWaypoints.json" -- Replace with your raw Boss JSON URL
 
 local currentTarget = nil
 local isEnabled = false
@@ -158,6 +159,11 @@ local currentWaypointIndex = 1
 local lastSpawnVisitTime = 0
 local spawnVisitDelay = 0.1
 local customWaypoints = {}
+local bossWaypoints = {}
+local isBossAutoEnabled = false
+local selectedBosses = {}
+local currentBossIndex = 1
+local lastBossVisitTime = 0
 
 -- Auto-load waypoints from URL on startup
 if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
@@ -220,13 +226,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if not rootPart then return end
 	
 	if isBossAutoEnabled then
-		local aggroZones = workspace:FindFirstChild("Zones") and workspace.Zones:FindFirstChild("Aggro")
-		if not aggroZones then return end
+		if #bossWaypoints == 0 then return end
 		
 		local validBosses = {}
-		for _, zone in ipairs(aggroZones:GetChildren()) do
-			if selectedBosses[zone.Name] then
-				table.insert(validBosses, zone)
+		for _, wp in ipairs(bossWaypoints) do
+			if selectedBosses[wp.Name] then
+				table.insert(validBosses, wp)
 			end
 		end
 		
@@ -236,14 +241,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			currentBossIndex = 1
 		end
 		
-		local targetZone = validBosses[currentBossIndex]
-		local zonePos = targetZone:IsA("Model") and (targetZone.PrimaryPart and targetZone.PrimaryPart.Position or targetZone:GetModelCFrame().Position) or targetZone.Position
+		local targetWaypoint = validBosses[currentBossIndex]
 		
 		local foundEntity = nil
 		
-		-- Search ClientEntities for the boss model matching the zone's name
+		-- Search ClientEntities for the boss model matching the waypoint's name
 		for _, entity in ipairs(clientEntities:GetChildren()) do
-			if entity.Name == targetZone.Name then
+			if entity.Name == targetWaypoint.Name then
 				local humanoid = entity:FindFirstChildOfClass("Humanoid")
 				if not humanoid or humanoid.Health > 0 then
 					foundEntity = entity
@@ -259,7 +263,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			targetCFrame = getTargetCFrame(foundEntity)
 			isFighting = true
 		else
-			targetCFrame = CFrame.new(zonePos)
+			targetCFrame = CFrame.new(targetWaypoint.Position)
 		end
 		
 		if targetCFrame then
@@ -342,11 +346,8 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		if entity.Name == targetWaypoint.Name then
 			local humanoid = entity:FindFirstChildOfClass("Humanoid")
 			if not humanoid or humanoid.Health > 0 then
-				local eCFrame = getTargetCFrame(entity)
-				if eCFrame and (eCFrame.Position - targetWaypoint.Position).Magnitude < 50 then
-					foundEntity = entity
-					break
-				end
+				foundEntity = entity
+				break
 			end
 		end
 	end
@@ -419,10 +420,6 @@ end)
 -- ==========================================
 -- BOSSES TAB
 -- ==========================================
-local isBossAutoEnabled = false
-local selectedBosses = {}
-local currentBossIndex = 1
-local lastBossVisitTime = 0
 
 local BossToggle = Tabs.Bosses:AddToggle("BossToggle", {
 	Title = "Enable Boss Auto Farm", 
@@ -446,38 +443,44 @@ BossDropdown:OnChanged(function(Value)
 	selectedBosses = Value
 end)
 
-local function updateBossList()
-	local aggroZones = workspace:FindFirstChild("Zones") and workspace.Zones:FindFirstChild("Aggro")
-	if aggroZones then
-		local names = {}
-		local added = {}
-		for _, zone in ipairs(aggroZones:GetChildren()) do
-			if not added[zone.Name] then
-				added[zone.Name] = true
-				table.insert(names, zone.Name)
+-- Auto-load boss waypoints from URL
+if BOSS_WAYPOINTS_URL ~= "" and BOSS_WAYPOINTS_URL ~= "PUT_YOUR_BOSS_JSON_URL_HERE" then
+	task.spawn(function()
+		local success, res = pcall(function()
+			return game:HttpGet(BOSS_WAYPOINTS_URL)
+		end)
+		if success and res then
+			local decodeSuccess, decoded = pcall(function()
+				return HttpService:JSONDecode(res)
+			end)
+			if decodeSuccess and type(decoded) == "table" then
+				bossWaypoints = {}
+				local uniqueBossNames = {}
+				local addedNames = {}
+				
+				for _, wp in ipairs(decoded) do
+					if wp.X and wp.Y and wp.Z and wp.Name then
+						table.insert(bossWaypoints, {Name = wp.Name, Position = Vector3.new(wp.X, wp.Y, wp.Z)})
+						
+						if not addedNames[wp.Name] then
+							addedNames[wp.Name] = true
+							table.insert(uniqueBossNames, wp.Name)
+						end
+					end
+				end
+				
+				table.sort(uniqueBossNames)
+				BossDropdown:SetValues(uniqueBossNames)
+				
+				Fluent:Notify({ Title = "Success", Content = "Loaded " .. #bossWaypoints .. " online boss waypoints!", Duration = 3 })
+			else
+				Fluent:Notify({ Title = "Error", Content = "Failed to parse online boss waypoints JSON.", Duration = 5 })
 			end
+		else
+			Fluent:Notify({ Title = "Error", Content = "Failed to fetch online boss waypoints.", Duration = 5 })
 		end
-		table.sort(names)
-		BossDropdown:SetValues(names)
-	else
-		Fluent:Notify({ Title = "Error", Content = "workspace.Zones.Aggro not found!", Duration = 3 })
-	end
+	end)
 end
-
-Tabs.Bosses:AddButton({
-	Title = "Refresh Bosses",
-	Description = "Refresh the boss list from workspace.Zones.Aggro",
-	Callback = function()
-		updateBossList()
-		Fluent:Notify({ Title = "Refreshed", Content = "Boss list has been updated.", Duration = 2 })
-	end
-})
-
--- Initial population
-task.spawn(function()
-	task.wait(2) -- Wait for game to fully load
-	updateBossList()
-end)
 
 -- ==========================================
 -- AUTO KEY TAB
