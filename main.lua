@@ -241,22 +241,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		
 		local foundEntity = nil
 		
-		-- First check if the zone itself is the boss (has a humanoid)
-		local zoneHumanoid = targetZone:FindFirstChildOfClass("Humanoid")
-		if zoneHumanoid and zoneHumanoid.Health > 0 then
-			foundEntity = targetZone
-		else
-			-- Otherwise check ClientEntities
-			for _, entity in ipairs(clientEntities:GetChildren()) do
-				if entity.Name == targetZone.Name then
-					local humanoid = entity:FindFirstChildOfClass("Humanoid")
-					if not humanoid or humanoid.Health > 0 then
-						local eCFrame = getTargetCFrame(entity)
-						if eCFrame and (eCFrame.Position - zonePos).Magnitude < 100 then
-							foundEntity = entity
-							break
-						end
-					end
+		-- Search ClientEntities for the boss model matching the zone's name
+		for _, entity in ipairs(clientEntities:GetChildren()) do
+			if entity.Name == targetZone.Name then
+				local humanoid = entity:FindFirstChildOfClass("Humanoid")
+				if not humanoid or humanoid.Health > 0 then
+					foundEntity = entity
+					break
 				end
 			end
 		end
