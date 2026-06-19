@@ -5,6 +5,8 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 local clientEntities = workspace:WaitForChild("ClientEntities")
 
+local WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/MobWaypoints.json" -- Replace with your raw JSON URL
+
 local currentTarget = nil
 local isEnabled = false
 local selectedEntities = {}
@@ -30,7 +32,9 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
 	Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" })
+	Bosses = Window:AddTab({ Title = "Bosses", Icon = "skull" }),
+	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
+	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
 -- Toggle for auto teleport
@@ -41,15 +45,12 @@ local EnableToggle = Tabs.Main:AddToggle("EnableToggle", {
 
 EnableToggle:OnChanged(function(Value)
 	isEnabled = Value
-	if not isEnabled then
-		currentTarget = nil -- Clear target when disabled
-	end
 end)
 
 -- Dropdown to select preferred entity names
 local EntityDropdown = Tabs.Main:AddDropdown("EntityDropdown", {
 	Title = "Preferred Entities",
-	Description = "Select which entities to target (groups by name)",
+	Description = "Select which entities to target from the loaded waypoints",
 	Values = {},
 	Multi = true,
 	Default = {},
@@ -57,11 +58,6 @@ local EntityDropdown = Tabs.Main:AddDropdown("EntityDropdown", {
 
 EntityDropdown:OnChanged(function(Value)
 	selectedEntities = Value
-	
-	-- If our current target's name is no longer selected, clear it
-	if currentTarget and not selectedEntities[currentTarget.Name] then
-		currentTarget = nil
-	end
 end)
 
 -- Dropdown for Movement Mode
@@ -156,39 +152,51 @@ PositionDropdown:OnChanged(function(Value)
 	teleportPosition = Value
 end)
 
--- Function to extract unique entity names from the workspace
-local function updateEntityList()
-	local entityNames = {}
-	local added = {}
-	
-	for _, entity in ipairs(clientEntities:GetChildren()) do
-		local name = entity.Name
-		if not added[name] then
-			added[name] = true
-			table.insert(entityNames, name)
+local HttpService = game:GetService("HttpService")
+
+local currentWaypointIndex = 1
+local lastSpawnVisitTime = 0
+local spawnVisitDelay = 0.1
+local customWaypoints = {}
+
+-- Auto-load waypoints from URL on startup
+if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
+	task.spawn(function()
+		local success, res = pcall(function()
+			return game:HttpGet(WAYPOINTS_URL)
+		end)
+		if success and res then
+			local decodeSuccess, decoded = pcall(function()
+				return HttpService:JSONDecode(res)
+			end)
+			if decodeSuccess and type(decoded) == "table" then
+				customWaypoints = {}
+				local uniqueMobNames = {}
+				local addedNames = {}
+				
+				for _, wp in ipairs(decoded) do
+					if wp.X and wp.Y and wp.Z and wp.Name then
+						table.insert(customWaypoints, {Name = wp.Name, Position = Vector3.new(wp.X, wp.Y, wp.Z)})
+						
+						if not addedNames[wp.Name] then
+							addedNames[wp.Name] = true
+							table.insert(uniqueMobNames, wp.Name)
+						end
+					end
+				end
+				
+				table.sort(uniqueMobNames)
+				EntityDropdown:SetValues(uniqueMobNames)
+				
+				Fluent:Notify({ Title = "Success", Content = "Loaded " .. #customWaypoints .. " online waypoints!", Duration = 3 })
+			else
+				Fluent:Notify({ Title = "Error", Content = "Failed to parse online waypoints JSON.", Duration = 5 })
+			end
+		else
+			Fluent:Notify({ Title = "Error", Content = "Failed to fetch online waypoints.", Duration = 5 })
 		end
-	end
-	
-	table.sort(entityNames)
-	EntityDropdown:SetValues(entityNames)
+	end)
 end
-
--- Refresh Button
-Tabs.Main:AddButton({
-	Title = "Refresh Entities List",
-	Description = "Updates the dropdown with current entities in workspace",
-	Callback = function()
-		updateEntityList()
-		Fluent:Notify({
-			Title = "Refreshed",
-			Content = "Entity list has been updated.",
-			Duration = 3
-		})
-	end
-})
-
--- Initial population of the dropdown
-updateEntityList()
 
 -- Gets the CFrame of the target entity
 local function getTargetCFrame(target)
@@ -203,55 +211,69 @@ local function getTargetCFrame(target)
 	return nil
 end
 
--- Checks if a target is valid
-local function isValidTarget(target)
-	if not target or not target.Parent or target.Parent ~= clientEntities then
-		return false
-	end
-	
-	if not selectedEntities[target.Name] then
-		return false
-	end
-	
-	local humanoid = target:FindFirstChildOfClass("Humanoid")
-	if humanoid and humanoid.Health <= 0 then
-		return false
-	end
-	
-	if not getTargetCFrame(target) then
-		return false
-	end
-	
-	return true
-end
-
 -- Continuous RenderStepped Loop for smooth tweening/teleporting
 RunService.RenderStepped:Connect(function(deltaTime)
-	if not isEnabled then return end
-	
 	local character = player.Character
 	if not character then return end
 	
 	local rootPart = character:FindFirstChild("HumanoidRootPart")
 	if not rootPart then return end
 	
-	if not isValidTarget(currentTarget) then
-		currentTarget = nil
+	if isBossAutoEnabled then
+		local aggroZones = workspace:FindFirstChild("Zones") and workspace.Zones:FindFirstChild("Aggro")
+		if not aggroZones then return end
 		
-		for _, entity in ipairs(clientEntities:GetChildren()) do
-			if isValidTarget(entity) then
-				currentTarget = entity
-				break
+		local validBosses = {}
+		for _, zone in ipairs(aggroZones:GetChildren()) do
+			if selectedBosses[zone.Name] then
+				table.insert(validBosses, zone)
 			end
 		end
-	end
-	
-	if currentTarget then
-		local targetCFrame = getTargetCFrame(currentTarget)
+		
+		if #validBosses == 0 then return end
+		
+		if currentBossIndex > #validBosses then
+			currentBossIndex = 1
+		end
+		
+		local targetZone = validBosses[currentBossIndex]
+		local zonePos = targetZone:IsA("Model") and (targetZone.PrimaryPart and targetZone.PrimaryPart.Position or targetZone:GetModelCFrame().Position) or targetZone.Position
+		
+		local foundEntity = nil
+		
+		-- First check if the zone itself is the boss (has a humanoid)
+		local zoneHumanoid = targetZone:FindFirstChildOfClass("Humanoid")
+		if zoneHumanoid and zoneHumanoid.Health > 0 then
+			foundEntity = targetZone
+		else
+			-- Otherwise check ClientEntities
+			for _, entity in ipairs(clientEntities:GetChildren()) do
+				if entity.Name == targetZone.Name then
+					local humanoid = entity:FindFirstChildOfClass("Humanoid")
+					if not humanoid or humanoid.Health > 0 then
+						local eCFrame = getTargetCFrame(entity)
+						if eCFrame and (eCFrame.Position - zonePos).Magnitude < 100 then
+							foundEntity = entity
+							break
+						end
+					end
+				end
+			end
+		end
+		
+		local targetCFrame
+		local isFighting = false
+		
+		if foundEntity then
+			targetCFrame = getTargetCFrame(foundEntity)
+			isFighting = true
+		else
+			targetCFrame = CFrame.new(zonePos)
+		end
+		
 		if targetCFrame then
 			local newCFrame
 			
-			-- Look At the target so our attacks/hitboxes actually hit them
 			if teleportPosition == "Above" then
 				local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
 				newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
@@ -267,32 +289,203 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			end
 			
 			if movementMode == "Tween" then
-				-- Calculate distance and how much we can move this frame based on speed
 				local currentPos = rootPart.Position
-				local targetPos = newCFrame.Position
-				local distance = (targetPos - currentPos).Magnitude
+				local distance = (newCFrame.Position - currentPos).Magnitude
 				local maxMove = tweenSpeed * deltaTime
 				
 				if distance > maxMove then
-					-- Glide towards the target
-					local direction = (targetPos - currentPos).Unit
+					local direction = (newCFrame.Position - currentPos).Unit
 					local nextPos = currentPos + (direction * maxMove)
-					-- Move position but maintain the lookAt rotation
 					rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+					lastBossVisitTime = os.clock()
 				else
-					-- We reached the target, snap exactly to it
 					rootPart.CFrame = newCFrame
+					if not isFighting then
+						if os.clock() - lastBossVisitTime >= spawnVisitDelay then
+							currentBossIndex = currentBossIndex + 1
+							lastBossVisitTime = os.clock()
+						end
+					else
+						lastBossVisitTime = os.clock()
+					end
 				end
 			else
-				-- Instant Teleport
 				rootPart.CFrame = newCFrame
+				if not isFighting then
+					if os.clock() - lastBossVisitTime >= spawnVisitDelay then
+						currentBossIndex = currentBossIndex + 1
+						lastBossVisitTime = os.clock()
+					end
+				else
+					lastBossVisitTime = os.clock()
+				end
 			end
 			
-			-- Reset velocity to prevent falling/flinging during the tween
 			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 			rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 		end
+		
+		return -- Skip normal mob farm while boss farm is active
 	end
+
+	if not isEnabled or #customWaypoints == 0 then return end
+	
+	local validWaypoints = {}
+	for _, wp in ipairs(customWaypoints) do
+		if selectedEntities[wp.Name] then
+			table.insert(validWaypoints, wp)
+		end
+	end
+	
+	if #validWaypoints == 0 then return end
+	
+	if currentWaypointIndex > #validWaypoints then
+		currentWaypointIndex = 1
+	end
+	
+	local targetWaypoint = validWaypoints[currentWaypointIndex]
+	
+	-- Look for the specific mob at this waypoint
+	local foundEntity = nil
+	for _, entity in ipairs(clientEntities:GetChildren()) do
+		if entity.Name == targetWaypoint.Name then
+			local humanoid = entity:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health > 0 then
+				local eCFrame = getTargetCFrame(entity)
+				if eCFrame and (eCFrame.Position - targetWaypoint.Position).Magnitude < 50 then
+					foundEntity = entity
+					break
+				end
+			end
+		end
+	end
+	
+	local targetCFrame
+	local isFighting = false
+	
+	if foundEntity then
+		targetCFrame = getTargetCFrame(foundEntity)
+		isFighting = true
+	else
+		targetCFrame = CFrame.new(targetWaypoint.Position)
+	end
+	
+	if targetCFrame then
+		local newCFrame
+		
+		if teleportPosition == "Above" then
+			local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+			newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+		elseif teleportPosition == "Below" then
+			local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+			newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+		elseif teleportPosition == "Behind" then
+			local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
+			newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+		else
+			local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+			newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+		end
+		
+		if movementMode == "Tween" then
+			local currentPos = rootPart.Position
+			local distance = (newCFrame.Position - currentPos).Magnitude
+			local maxMove = tweenSpeed * deltaTime
+			
+			if distance > maxMove then
+				local direction = (newCFrame.Position - currentPos).Unit
+				local nextPos = currentPos + (direction * maxMove)
+				rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+				lastSpawnVisitTime = os.clock() -- Reset timer while moving
+			else
+				rootPart.CFrame = newCFrame
+				if not isFighting then
+					if os.clock() - lastSpawnVisitTime >= spawnVisitDelay then
+						currentWaypointIndex = currentWaypointIndex + 1
+						lastSpawnVisitTime = os.clock()
+					end
+				else
+					lastSpawnVisitTime = os.clock() -- Keep timer reset while fighting
+				end
+			end
+		else
+			rootPart.CFrame = newCFrame
+			if not isFighting then
+				if os.clock() - lastSpawnVisitTime >= spawnVisitDelay then
+					currentWaypointIndex = currentWaypointIndex + 1
+					lastSpawnVisitTime = os.clock()
+				end
+			else
+				lastSpawnVisitTime = os.clock()
+			end
+		end
+		
+		rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+		rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+	end
+end)
+
+-- ==========================================
+-- BOSSES TAB
+-- ==========================================
+local isBossAutoEnabled = false
+local selectedBosses = {}
+local currentBossIndex = 1
+local lastBossVisitTime = 0
+
+local BossToggle = Tabs.Bosses:AddToggle("BossToggle", {
+	Title = "Enable Boss Auto Farm", 
+	Default = false,
+	Description = "Continuously teleports to selected bosses (overrides normal mob farm)"
+})
+
+BossToggle:OnChanged(function(Value)
+	isBossAutoEnabled = Value
+end)
+
+local BossDropdown = Tabs.Bosses:AddDropdown("BossDropdown", {
+	Title = "Select Boss Zones",
+	Description = "Select boss zones to auto farm",
+	Values = {},
+	Multi = true,
+	Default = {},
+})
+
+BossDropdown:OnChanged(function(Value)
+	selectedBosses = Value
+end)
+
+local function updateBossList()
+	local aggroZones = workspace:FindFirstChild("Zones") and workspace.Zones:FindFirstChild("Aggro")
+	if aggroZones then
+		local names = {}
+		local added = {}
+		for _, zone in ipairs(aggroZones:GetChildren()) do
+			if not added[zone.Name] then
+				added[zone.Name] = true
+				table.insert(names, zone.Name)
+			end
+		end
+		table.sort(names)
+		BossDropdown:SetValues(names)
+	else
+		Fluent:Notify({ Title = "Error", Content = "workspace.Zones.Aggro not found!", Duration = 3 })
+	end
+end
+
+Tabs.Bosses:AddButton({
+	Title = "Refresh Bosses",
+	Description = "Refresh the boss list from workspace.Zones.Aggro",
+	Callback = function()
+		updateBossList()
+		Fluent:Notify({ Title = "Refreshed", Content = "Boss list has been updated.", Duration = 2 })
+	end
+})
+
+-- Initial population
+task.spawn(function()
+	task.wait(2) -- Wait for game to fully load
+	updateBossList()
 end)
 
 -- ==========================================
@@ -423,9 +616,29 @@ ToggleBtn.InputChanged:Connect(function(input)
 end)
 
 ToggleBtn.MouseButton1Click:Connect(function()
-	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightControl, false, game)
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
 	task.wait(0.01)
-	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightControl, false, game)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
 end)
 
+-- ==========================================
+-- SAVE MANAGER (SETTINGS)
+-- ==========================================
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+
+InterfaceManager:SetFolder("AutoTeleportSettings")
+SaveManager:SetFolder("AutoTeleportSettings/Configs")
+
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
 Window:SelectTab(1)
+
+SaveManager:LoadAutoloadConfig()
