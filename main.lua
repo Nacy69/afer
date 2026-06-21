@@ -34,6 +34,7 @@ local Window = Fluent:CreateWindow({
 local Tabs = {
 	Main = Window:AddTab({ Title = "Main", Icon = "home" }),
 	Bosses = Window:AddTab({ Title = "Bosses", Icon = "skull" }),
+	Kurama = Window:AddTab({ Title = "Kurama", Icon = "box" }),
 	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
@@ -165,6 +166,15 @@ local selectedBosses = {}
 local currentBossIndex = 1
 local lastBossVisitTime = 0
 
+local isKuramaAutoEnabled = false
+local kuramaSafetyThreshold = 30
+local kuramaHighDistance = 100
+local kuramaAlwaysBehind = false
+local kuramaTeleportDistance = 5
+local lastKuramaSummonTime = 0
+local kuramaSpawnTime = 0
+local wasKuramaAlive = false
+
 -- Auto-load waypoints from URL on startup
 if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
 	task.spawn(function()
@@ -225,6 +235,144 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local rootPart = character:FindFirstChild("HumanoidRootPart")
 	if not rootPart then return end
 	
+	if isKuramaAutoEnabled then
+		local kurama = clientEntities:FindFirstChild("Kurama")
+		local isKuramaAlive = false
+		if kurama then
+			local humanoid = kurama:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health > 0 then
+				isKuramaAlive = true
+			end
+		end
+
+		if isKuramaAlive then
+			if not wasKuramaAlive then
+				kuramaSpawnTime = os.clock()
+				wasKuramaAlive = true
+			end
+
+			if os.clock() - kuramaSpawnTime < 3 then
+				return -- Wait 3 seconds before locking on
+			end
+
+			local humanoid = kurama:FindFirstChildOfClass("Humanoid")
+			local targetCFrame = getTargetCFrame(kurama)
+			if targetCFrame then
+				local playerHumanoid = character:FindFirstChildOfClass("Humanoid")
+				local healthPercent = playerHumanoid and (playerHumanoid.Health / playerHumanoid.MaxHealth) * 100 or 100
+				
+				local newCFrame
+				if healthPercent < kuramaSafetyThreshold then
+					-- Safety High
+					local pos = targetCFrame.Position + Vector3.new(0, kuramaHighDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				else
+					-- Normal teleport
+					local activePosition = kuramaAlwaysBehind and "Behind" or teleportPosition
+					if activePosition == "Above" then
+						local pos = targetCFrame.Position + Vector3.new(0, kuramaTeleportDistance, 0)
+						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+					elseif activePosition == "Below" then
+						local pos = targetCFrame.Position + Vector3.new(0, -kuramaTeleportDistance, 0)
+						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+					elseif activePosition == "Behind" then
+						local pos = targetCFrame.Position + (targetCFrame.LookVector * -kuramaTeleportDistance)
+						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+					else
+						local pos = targetCFrame.Position + Vector3.new(0, kuramaTeleportDistance, 0)
+						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+					end
+				end
+				
+				local activeMovement = (kuramaAlwaysBehind and healthPercent >= kuramaSafetyThreshold) and "Instant" or movementMode
+				
+				if activeMovement == "Tween" then
+					local currentPos = rootPart.Position
+					local distance = (newCFrame.Position - currentPos).Magnitude
+					local maxMove = tweenSpeed * deltaTime
+					
+					if distance > maxMove then
+						local direction = (newCFrame.Position - currentPos).Unit
+						local nextPos = currentPos + (direction * maxMove)
+						rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+					else
+						rootPart.CFrame = newCFrame
+					end
+				else
+					rootPart.CFrame = newCFrame
+				end
+				
+				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			end
+		else
+			wasKuramaAlive = false
+
+			if os.clock() - lastKuramaSummonTime < 20 then
+				return -- Wait in the arena for Kurama to spawn, don't teleport back to Totem
+			end
+			
+			local mapFolder = workspace:FindFirstChild("Map")
+			local totem = nil
+			if mapFolder then
+				local arenas = mapFolder:FindFirstChild("Arenas")
+				if arenas and arenas:FindFirstChild("Boss") and arenas.Boss:FindFirstChild("KuramaArena") then
+					totem = arenas.Boss.KuramaArena:FindFirstChild("Totem")
+				end
+			end
+			
+			if totem then
+				local targetCFrame
+				if totem:IsA("Model") then
+					local part = totem.PrimaryPart or totem:FindFirstChildWhichIsA("BasePart")
+					if part then targetCFrame = part.CFrame end
+				elseif totem:IsA("BasePart") then
+					targetCFrame = totem.CFrame
+				else
+					targetCFrame = totem:GetPivot()
+				end
+				
+				if targetCFrame then
+					local distance = (rootPart.Position - targetCFrame.Position).Magnitude
+					
+					if movementMode == "Tween" then
+						local maxMove = tweenSpeed * deltaTime
+						if distance > maxMove then
+							local direction = (targetCFrame.Position - rootPart.Position).Unit
+							local nextPos = rootPart.Position + (direction * maxMove)
+							rootPart.CFrame = CFrame.new(nextPos) * targetCFrame.Rotation
+						else
+							rootPart.CFrame = targetCFrame
+						end
+					else
+						rootPart.CFrame = targetCFrame
+					end
+					
+					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+					
+					if distance <= 15 then
+						local prompt = totem:FindFirstChildWhichIsA("ProximityPrompt", true)
+						if prompt then
+							if type(fireproximityprompt) == "function" then
+								pcall(function() fireproximityprompt(prompt, 1, true) end)
+								pcall(function() fireproximityprompt(prompt) end)
+							end
+							
+							VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+							task.delay(0.2, function()
+								VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+							end)
+							
+							lastKuramaSummonTime = os.clock()
+						end
+					end
+				end
+			end
+		end
+		return -- Skip boss/mob farm while Kurama farm is active
+	end
+
 	if isBossAutoEnabled then
 		if #bossWaypoints == 0 then return end
 		
@@ -481,6 +629,93 @@ if BOSS_WAYPOINTS_URL ~= "" and BOSS_WAYPOINTS_URL ~= "PUT_YOUR_BOSS_JSON_URL_HE
 		end
 	end)
 end
+
+-- ==========================================
+-- KURAMA TAB
+-- ==========================================
+
+local KuramaToggle = Tabs.Kurama:AddToggle("KuramaToggle", {
+	Title = "Enable Auto Kurama", 
+	Default = false,
+	Description = "Continuously teleports to Kurama"
+})
+
+KuramaToggle:OnChanged(function(Value)
+	isKuramaAutoEnabled = Value
+end)
+
+local KuramaBehindToggle = Tabs.Kurama:AddToggle("KuramaBehindToggle", {
+	Title = "Always Behind (Auto Dodge)", 
+	Default = false,
+	Description = "Overrides settings to instantly teleport behind Kurama at all times."
+})
+
+KuramaBehindToggle:OnChanged(function(Value)
+	kuramaAlwaysBehind = Value
+end)
+
+local KuramaDistanceSlider = Tabs.Kurama:AddSlider("KuramaDistanceSlider", {
+	Title = "Attack Distance",
+	Description = "Distance from Kurama",
+	Default = 66,
+	Min = 0,
+	Max = 100,
+	Rounding = 1,
+	Callback = function(Value)
+		kuramaTeleportDistance = Value
+	end
+})
+
+KuramaDistanceSlider:OnChanged(function(Value)
+	kuramaTeleportDistance = Value
+end)
+
+local KuramaDistanceInput = Tabs.Kurama:AddInput("KuramaDistanceInput", {
+	Title = "Type Exact Attack Distance",
+	Default = "66",
+	Placeholder = "Enter distance...",
+	Numeric = true,
+	Finished = true,
+	Callback = function(Value)
+		local num = tonumber(Value)
+		if num then
+			kuramaTeleportDistance = num
+			KuramaDistanceSlider:SetValue(num)
+		end
+	end
+})
+
+local KuramaHealthSlider = Tabs.Kurama:AddSlider("KuramaHealthSlider", {
+	Title = "Safety Health Threshold (%)",
+	Description = "If health drops below this %, teleports high above Kurama.",
+	Default = 30,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Callback = function(Value)
+		kuramaSafetyThreshold = Value
+	end
+})
+
+KuramaHealthSlider:OnChanged(function(Value)
+	kuramaSafetyThreshold = Value
+end)
+
+local KuramaHighDistanceSlider = Tabs.Kurama:AddSlider("KuramaHighDistanceSlider", {
+	Title = "Safety High Distance",
+	Description = "How high to teleport when health is low.",
+	Default = 150,
+	Min = 50,
+	Max = 1000,
+	Rounding = 0,
+	Callback = function(Value)
+		kuramaHighDistance = Value
+	end
+})
+
+KuramaHighDistanceSlider:OnChanged(function(Value)
+	kuramaHighDistance = Value
+end)
 
 -- ==========================================
 -- AUTO KEY TAB
