@@ -11,6 +11,7 @@ local BOSS_WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/h
 local currentTarget = nil
 local isEnabled = false
 local selectedEntities = {}
+local isCurrentlyFighting = false
 
 local teleportDistance = 5
 local teleportPosition = "Above"
@@ -229,6 +230,7 @@ end
 
 -- Continuous RenderStepped Loop for smooth tweening/teleporting
 RunService.RenderStepped:Connect(function(deltaTime)
+	isCurrentlyFighting = false
 	local character = player.Character
 	if not character then return end
 	
@@ -258,6 +260,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			local humanoid = kurama:FindFirstChildOfClass("Humanoid")
 			local targetCFrame = getTargetCFrame(kurama)
 			if targetCFrame then
+				isCurrentlyFighting = true
 				local playerHumanoid = character:FindFirstChildOfClass("Humanoid")
 				local healthPercent = playerHumanoid and (playerHumanoid.Health / playerHumanoid.MaxHealth) * 100 or 100
 				
@@ -410,6 +413,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		if foundEntity then
 			targetCFrame = getTargetCFrame(foundEntity)
 			isFighting = true
+			isCurrentlyFighting = true
 		else
 			targetCFrame = CFrame.new(targetWaypoint.Position)
 		end
@@ -506,6 +510,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if foundEntity then
 		targetCFrame = getTargetCFrame(foundEntity)
 		isFighting = true
+		isCurrentlyFighting = true
 	else
 		targetCFrame = CFrame.new(targetWaypoint.Position)
 	end
@@ -733,19 +738,28 @@ AutoKeyToggle:OnChanged(function(Value)
 	isAutoKeyEnabled = Value
 end)
 
-local alphabetList = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
-
-local KeysDropdown = Tabs.AutoKey:AddDropdown("KeysDropdown", {
-	Title = "Select Keys",
-	Description = "Select which alphabet keys to auto press",
-	Values = alphabetList,
-	Multi = true,
-	Default = {},
+local KeysInput = Tabs.AutoKey:AddInput("KeysInput", {
+	Title = "Keys to Auto Press",
+	Description = "Enter keys separated by commas (e.g., A, B, C, One, F1)",
+	Default = "",
+	Placeholder = "e.g., A, B, C",
+	Numeric = false,
+	Finished = true,
+	Callback = function(Value)
+		selectedKeys = {}
+		if Value then
+			for keyStr in string.gmatch(Value, "[^,]+") do
+				local key = keyStr:match("^%s*(.-)%s*$")
+				if key and key ~= "" then
+					if #key == 1 then
+						key = string.upper(key)
+					end
+					selectedKeys[key] = true
+				end
+			end
+		end
+	end
 })
-
-KeysDropdown:OnChanged(function(Value)
-	selectedKeys = Value
-end)
 
 local KeyDelaySlider = Tabs.AutoKey:AddSlider("KeyDelaySlider", {
 	Title = "Key Press Delay",
@@ -765,7 +779,7 @@ end)
 
 task.spawn(function()
 	while true do
-		if isAutoKeyEnabled then
+		if isAutoKeyEnabled and isCurrentlyFighting then
 			local pressedAny = false
 			for key, isSelected in pairs(selectedKeys) do
 				if isSelected then
