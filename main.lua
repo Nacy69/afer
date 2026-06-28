@@ -36,6 +36,7 @@ local Tabs = {
 	Main = Window:AddTab({ Title = "Main", Icon = "home" }),
 	Bosses = Window:AddTab({ Title = "Bosses", Icon = "skull" }),
 	Kurama = Window:AddTab({ Title = "Kurama", Icon = "box" }),
+	Dungeon = Window:AddTab({ Title = "Dungeon", Icon = "swords" }),
 	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
@@ -175,6 +176,8 @@ local kuramaTeleportDistance = 5
 local lastKuramaSummonTime = 0
 local kuramaSpawnTime = 0
 local wasKuramaAlive = false
+
+local isDungeonAutoEnabled = false
 
 -- Auto-load waypoints from URL on startup
 if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
@@ -374,6 +377,62 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			end
 		end
 		return -- Skip boss/mob farm while Kurama farm is active
+	end
+
+	if isDungeonAutoEnabled then
+		local foundEntity = nil
+		
+		for _, entity in ipairs(clientEntities:GetChildren()) do
+			local humanoid = entity:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health > 0 then
+				foundEntity = entity
+				break
+			end
+		end
+		
+		if foundEntity then
+			local targetCFrame = getTargetCFrame(foundEntity)
+			if targetCFrame then
+				isCurrentlyFighting = true
+				
+				local newCFrame
+				
+				if teleportPosition == "Above" then
+					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif teleportPosition == "Below" then
+					local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif teleportPosition == "Behind" then
+					local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				else
+					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				end
+				
+				if movementMode == "Tween" then
+					local currentPos = rootPart.Position
+					local distance = (newCFrame.Position - currentPos).Magnitude
+					local maxMove = tweenSpeed * deltaTime
+					
+					if distance > maxMove then
+						local direction = (newCFrame.Position - currentPos).Unit
+						local nextPos = currentPos + (direction * maxMove)
+						rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+					else
+						rootPart.CFrame = newCFrame
+					end
+				else
+					rootPart.CFrame = newCFrame
+				end
+				
+				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			end
+		end
+		
+		return -- Skip boss/mob farm while dungeon farm is active
 	end
 
 	if isBossAutoEnabled then
@@ -720,6 +779,20 @@ local KuramaHighDistanceSlider = Tabs.Kurama:AddSlider("KuramaHighDistanceSlider
 
 KuramaHighDistanceSlider:OnChanged(function(Value)
 	kuramaHighDistance = Value
+end)
+
+-- ==========================================
+-- DUNGEON TAB
+-- ==========================================
+
+local DungeonToggle = Tabs.Dungeon:AddToggle("DungeonToggle", {
+	Title = "Enable Auto Dungeon", 
+	Default = false,
+	Description = "Continuously teleports to ALL entities in ClientEntities"
+})
+
+DungeonToggle:OnChanged(function(Value)
+	isDungeonAutoEnabled = Value
 end)
 
 -- ==========================================
