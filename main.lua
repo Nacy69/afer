@@ -116,7 +116,7 @@ local DistanceSlider = Tabs.Main:AddSlider("DistanceSlider", {
 	Description = "Distance from the target entity",
 	Default = 5,
 	Min = 0,
-	Max = 50,
+	Max = 100,
 	Rounding = 1,
 	Callback = function(Value)
 		teleportDistance = Value
@@ -156,6 +156,29 @@ PositionDropdown:OnChanged(function(Value)
 	teleportPosition = Value
 end)
 
+-- Toggle for Auto Look Down
+local isAutoLookDownEnabled = false
+local LookDownToggle = Tabs.Main:AddToggle("LookDownToggle", {
+	Title = "Auto Look Down", 
+	Default = false,
+	Description = "Automatically points your camera straight down to reduce lag"
+})
+
+LookDownToggle:OnChanged(function(Value)
+	isAutoLookDownEnabled = Value
+end)
+
+RunService.RenderStepped:Connect(function()
+	if isAutoLookDownEnabled then
+		local camera = workspace.CurrentCamera
+		if camera and player.Character then
+			-- Look straight down from current camera position
+			local currentPos = camera.CFrame.Position
+			camera.CFrame = CFrame.new(currentPos, currentPos + Vector3.new(0, -1, 0))
+		end
+	end
+end)
+
 local HttpService = game:GetService("HttpService")
 
 local currentWaypointIndex = 1
@@ -177,6 +200,7 @@ local lastKuramaSummonTime = 0
 local kuramaSpawnTime = 0
 local wasKuramaAlive = false
 
+local isKuramaIgrosPriorityEnabled = true
 local isDungeonAutoEnabled = false
 
 -- Auto-load waypoints from URL on startup
@@ -241,6 +265,84 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if not rootPart then return end
 	
 	if isKuramaAutoEnabled then
+		-- Check for Igros priority
+		if isKuramaIgrosPriorityEnabled then
+			local igrosTimeLabel = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Boards") and workspace.Map.Boards:FindFirstChild("BossRates") and workspace.Map.Boards.BossRates:FindFirstChild("Board") and workspace.Map.Boards.BossRates.Board:FindFirstChild("Display") and workspace.Map.Boards.BossRates.Board.Display:FindFirstChild("ScrollingFrame") and workspace.Map.Boards.BossRates.Board.Display.ScrollingFrame:FindFirstChild("Igros") and workspace.Map.Boards.BossRates.Board.Display.ScrollingFrame.Igros:FindFirstChild("Time")
+			
+			if igrosTimeLabel and igrosTimeLabel:IsA("TextLabel") and igrosTimeLabel.Text == "Spawned" then
+				local targetCFrame = nil
+				local isFighting = false
+				
+				local igros = clientEntities:FindFirstChild("Igros")
+				if igros then
+					local humanoid = igros:FindFirstChildOfClass("Humanoid")
+					if not humanoid or humanoid.Health > 0 then
+						targetCFrame = getTargetCFrame(igros)
+						isFighting = true
+					end
+				end
+				
+				if not targetCFrame then
+					-- Teleport to waypoint first so Igros can render
+					local igrosWaypoint = nil
+					for _, wp in ipairs(bossWaypoints) do
+						if wp.Name == "Igros" then igrosWaypoint = wp break end
+					end
+					if not igrosWaypoint then
+						for _, wp in ipairs(customWaypoints) do
+							if wp.Name == "Igros" then igrosWaypoint = wp break end
+						end
+					end
+					
+					if igrosWaypoint then
+						targetCFrame = CFrame.new(igrosWaypoint.Position)
+					end
+				end
+				
+				if targetCFrame then
+					isCurrentlyFighting = isFighting
+					local newCFrame
+					if isFighting then
+						local activePosition = teleportPosition
+						if activePosition == "Above" then
+							local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						elseif activePosition == "Below" then
+							local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						elseif activePosition == "Behind" then
+							local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						else
+							local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						end
+					else
+						newCFrame = targetCFrame
+					end
+					
+					if movementMode == "Tween" then
+						local currentPos = rootPart.Position
+						local distance = (newCFrame.Position - currentPos).Magnitude
+						local maxMove = tweenSpeed * deltaTime
+						if distance > maxMove then
+							local direction = (newCFrame.Position - currentPos).Unit
+							local nextPos = currentPos + (direction * maxMove)
+							rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+						else
+							rootPart.CFrame = newCFrame
+						end
+					else
+						rootPart.CFrame = newCFrame
+					end
+					
+					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+					return -- Skip Kurama logic entirely for this frame while finding/fighting Igros
+				end
+			end
+		end
+
 		local kurama = clientEntities:FindFirstChild("Kurama")
 		local isKuramaAlive = false
 		if kurama then
@@ -708,6 +810,16 @@ KuramaToggle:OnChanged(function(Value)
 	isKuramaAutoEnabled = Value
 end)
 
+local KuramaIgrosPriorityToggle = Tabs.Kurama:AddToggle("KuramaIgrosPriorityToggle", {
+	Title = "Prioritize Igros", 
+	Default = true,
+	Description = "Stops Kurama farm to kill Igros if it spawns, then returns to Kurama."
+})
+
+KuramaIgrosPriorityToggle:OnChanged(function(Value)
+	isKuramaIgrosPriorityEnabled = Value
+end)
+
 local KuramaBehindToggle = Tabs.Kurama:AddToggle("KuramaBehindToggle", {
 	Title = "Always Behind (Auto Dodge)", 
 	Default = false,
@@ -779,6 +891,30 @@ local KuramaHighDistanceSlider = Tabs.Kurama:AddSlider("KuramaHighDistanceSlider
 
 KuramaHighDistanceSlider:OnChanged(function(Value)
 	kuramaHighDistance = Value
+end)
+
+local KuramaPressEToggle = Tabs.Kurama:AddToggle("KuramaPressEToggle", {
+	Title = "Always Press E", 
+	Default = true,
+	Description = "Automatically presses E while Kurama farm is on."
+})
+
+local kuramaAlwaysPressE = true
+KuramaPressEToggle:OnChanged(function(Value)
+	kuramaAlwaysPressE = Value
+end)
+
+task.spawn(function()
+	while true do
+		if isKuramaAutoEnabled and kuramaAlwaysPressE then
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+			task.wait(0.01)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+			task.wait(0.1)
+		else
+			task.wait(0.1)
+		end
+	end
 end)
 
 -- ==========================================
