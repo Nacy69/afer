@@ -1280,7 +1280,7 @@ SaveManager:LoadAutoloadConfig()
 
 -- Automatically minimize GUI by default upon execution
 task.spawn(function()
-	task.wait(1.5)
+	task.wait(2.5)
 	local success = pcall(function()
 		-- Some forks of Fluent have Window:Minimize() or Window:Toggle()
 		if Window.Minimize then
@@ -1293,9 +1293,9 @@ task.spawn(function()
 	end)
 	
 	if not success then
-		-- Fallback to simulating the minimize key
-		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightControl, false, game)
+		-- Fallback to simulating the minimize key (LeftControl is what the ToggleBtn uses)
+		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
 		task.wait(0.01)
-		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightControl, false, game)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
 	end
 end)
