@@ -1280,7 +1280,7 @@ SaveManager:LoadAutoloadConfig()
 
 -- Automatically minimize GUI by default upon execution
 task.spawn(function()
-	task.wait(2.5)
+	task.wait(1.5)
 	local success = pcall(function()
 		-- Some forks of Fluent have Window:Minimize() or Window:Toggle()
 		if Window.Minimize then
