@@ -202,6 +202,12 @@ local wasKuramaAlive = false
 
 local kuramaPriorityBosses = {["Igros"] = true}
 local isDungeonAutoEnabled = false
+local lastDungeonEnterTime = 0
+local lastDungeonTimeLeftText = ""
+local lastDungeonTimeLeftChangeTime = 0
+local lastDungeonStartClickTime = 0
+local dungeonSafetyThreshold = 0
+local dungeonSafeDistance = 50
 
 -- Auto-load waypoints from URL on startup
 if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
@@ -491,55 +497,183 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	if isDungeonAutoEnabled then
-		local foundEntity = nil
+		local mapFolder = workspace:FindFirstChild("Map")
+		local interactive = mapFolder and mapFolder:FindFirstChild("Interactive")
+		local dungeonGate = interactive and interactive:FindFirstChild("DungeonGate")
 		
-		for _, entity in ipairs(clientEntities:GetChildren()) do
-			local humanoid = entity:FindFirstChildOfClass("Humanoid")
-			if not humanoid or humanoid.Health > 0 then
-				foundEntity = entity
-				break
-			end
-		end
-		
-		if foundEntity then
-			local targetCFrame = getTargetCFrame(foundEntity)
-			if targetCFrame then
-				isCurrentlyFighting = true
+		if dungeonGate then
+			if os.clock() - lastDungeonEnterTime > 5 then
+				lastDungeonEnterTime = os.clock()
 				
-				local newCFrame
-				
-				if teleportPosition == "Above" then
-					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
-					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-				elseif teleportPosition == "Below" then
-					local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
-					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-				elseif teleportPosition == "Behind" then
-					local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
-					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-				else
-					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
-					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				local targetCFrame
+				if dungeonGate:IsA("Model") then
+					local root = dungeonGate.PrimaryPart or dungeonGate:FindFirstChildWhichIsA("BasePart")
+					if root then targetCFrame = root.CFrame end
+				elseif dungeonGate:IsA("BasePart") then
+					targetCFrame = dungeonGate.CFrame
 				end
 				
-				if movementMode == "Tween" then
-					local currentPos = rootPart.Position
-					local distance = (newCFrame.Position - currentPos).Magnitude
-					local maxMove = tweenSpeed * deltaTime
+				if targetCFrame then
+					rootPart.CFrame = targetCFrame
+					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 					
-					if distance > maxMove then
-						local direction = (newCFrame.Position - currentPos).Unit
-						local nextPos = currentPos + (direction * maxMove)
-						rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
-					else
-						rootPart.CFrame = newCFrame
+					local prompt = dungeonGate:FindFirstChildWhichIsA("ProximityPrompt", true)
+					if prompt then
+						if type(fireproximityprompt) == "function" then
+							pcall(function() fireproximityprompt(prompt, 1, true) end)
+							pcall(function() fireproximityprompt(prompt) end)
+						end
+						VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+						task.delay(0.2, function()
+							VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+						end)
 					end
-				else
-					rootPart.CFrame = newCFrame
+					
+					task.delay(1, function()
+						local playerGui = player:FindFirstChild("PlayerGui")
+						if not playerGui then return end
+						
+						local function fireClick(guiElement)
+							if guiElement then
+								pcall(function()
+									if guiElement.AbsoluteSize and guiElement.AbsolutePosition then
+										local x = guiElement.AbsolutePosition.X + (guiElement.AbsoluteSize.X / 2)
+										local y = guiElement.AbsolutePosition.Y + (guiElement.AbsoluteSize.Y / 2) + 58
+										VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+										task.wait(0.05)
+										VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+									end
+								end)
+							end
+						end
+						
+						local main = playerGui:FindFirstChild("Main")
+						local pages = main and main:FindFirstChild("Pages")
+						local dungeon = pages and pages:FindFirstChild("Dungeon")
+						
+						if dungeon then
+							local creation = dungeon:FindFirstChild("Creation")
+							local jeju = creation and creation:FindFirstChild("Page") and creation.Page:FindFirstChild("Main") and creation.Page.Main:FindFirstChild("Dungeons") and creation.Page.Main.Dungeons:FindFirstChild("Main") and creation.Page.Main.Dungeons.Main:FindFirstChild("List") and creation.Page.Main.Dungeons.Main.List:FindFirstChild("JejuIsland")
+							if jeju then fireClick(jeju) end
+							
+							task.wait(0.5)
+							
+							local selection = dungeon:FindFirstChild("Selection")
+							local hard = selection and selection:FindFirstChild("Page") and selection.Page:FindFirstChild("Main") and selection.Page.Main:FindFirstChild("Difficulty") and selection.Page.Main.Difficulty:FindFirstChild("Frame") and selection.Page.Main.Difficulty.Frame:FindFirstChild("Hard")
+							if hard then fireClick(hard) end
+							
+							task.wait(0.5)
+							
+							local skipBtn = selection and selection:FindFirstChild("Page") and selection.Page:FindFirstChild("Main") and selection.Page.Main:FindFirstChild("Interact") and selection.Page.Main.Interact:FindFirstChild("Options") and selection.Page.Main.Interact.Options:FindFirstChild("SkipButton")
+							if skipBtn then fireClick(skipBtn) end
+						end
+					end)
+				end
+			end
+		else
+			local playerGui = player:FindFirstChild("PlayerGui")
+			local isDungeonStarted = false
+			
+			if playerGui then
+				local main = playerGui:FindFirstChild("Main")
+				local hud = main and main:FindFirstChild("HUD")
+				local dungeonTimer = hud and hud:FindFirstChild("DungeonTimer")
+				local timeLeft = dungeonTimer and dungeonTimer:FindFirstChild("TimeLeft")
+				
+				if timeLeft and timeLeft:IsA("TextLabel") then
+					if timeLeft.Text ~= lastDungeonTimeLeftText then
+						lastDungeonTimeLeftText = timeLeft.Text
+						lastDungeonTimeLeftChangeTime = os.clock()
+					end
+					-- If the text changed within the last 2 seconds, assume the dungeon has started.
+					if (os.clock() - lastDungeonTimeLeftChangeTime) < 2 then
+						isDungeonStarted = true
+					end
+				end
+			end
+			
+			if not isDungeonStarted then
+				if os.clock() - lastDungeonStartClickTime > 1.5 then
+					lastDungeonStartClickTime = os.clock()
+					if playerGui then
+						local main = playerGui:FindFirstChild("Main")
+						local pages = main and main:FindFirstChild("Pages")
+						local dungeon = pages and pages:FindFirstChild("Dungeon")
+						local info = dungeon and dungeon:FindFirstChild("Info")
+						local page = info and info:FindFirstChild("Page")
+						local options = page and page:FindFirstChild("Options")
+						local startBtn = options and options:FindFirstChild("StartButton")
+						
+						if startBtn then
+							pcall(function()
+								if startBtn.AbsoluteSize and startBtn.AbsolutePosition then
+									local x = startBtn.AbsolutePosition.X + (startBtn.AbsoluteSize.X / 2)
+									local y = startBtn.AbsolutePosition.Y + (startBtn.AbsoluteSize.Y / 2) + 58
+									VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+									task.wait(0.05)
+									VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+								end
+							end)
+						end
+					end
+				end
+			else
+				local foundEntity = nil
+				
+				for _, entity in ipairs(clientEntities:GetChildren()) do
+					local humanoid = entity:FindFirstChildOfClass("Humanoid")
+					if not humanoid or humanoid.Health > 0 then
+						foundEntity = entity
+						break
+					end
 				end
 				
-				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+				if foundEntity then
+					local targetCFrame = getTargetCFrame(foundEntity)
+					if targetCFrame then
+						isCurrentlyFighting = true
+						
+						local playerHumanoid = character:FindFirstChildOfClass("Humanoid")
+						local healthPercent = playerHumanoid and (playerHumanoid.Health / playerHumanoid.MaxHealth) * 100 or 100
+						local currentTeleportDistance = (dungeonSafetyThreshold > 0 and healthPercent <= dungeonSafetyThreshold) and dungeonSafeDistance or teleportDistance
+						
+						local newCFrame
+						
+						if teleportPosition == "Above" then
+							local pos = targetCFrame.Position + Vector3.new(0, currentTeleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						elseif teleportPosition == "Below" then
+							local pos = targetCFrame.Position + Vector3.new(0, -currentTeleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						elseif teleportPosition == "Behind" then
+							local pos = targetCFrame.Position + (targetCFrame.LookVector * -currentTeleportDistance)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						else
+							local pos = targetCFrame.Position + Vector3.new(0, currentTeleportDistance, 0)
+							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						end
+						
+						if movementMode == "Tween" then
+							local currentPos = rootPart.Position
+							local distance = (newCFrame.Position - currentPos).Magnitude
+							local maxMove = tweenSpeed * deltaTime
+							
+							if distance > maxMove then
+								local direction = (newCFrame.Position - currentPos).Unit
+								local nextPos = currentPos + (direction * maxMove)
+								rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+							else
+								rootPart.CFrame = newCFrame
+							end
+						else
+							rootPart.CFrame = newCFrame
+						end
+						
+						rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+						rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+					end
+				end
 			end
 		end
 		
@@ -942,6 +1076,38 @@ DungeonToggle:OnChanged(function(Value)
 	isDungeonAutoEnabled = Value
 end)
 
+local DungeonHealthSlider = Tabs.Dungeon:AddSlider("DungeonHealthSlider", {
+	Title = "Safety Health Threshold (%)",
+	Description = "If health drops below this %, changes attack distance. Set to 0 to disable.",
+	Default = 0,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Callback = function(Value)
+		dungeonSafetyThreshold = Value
+	end
+})
+
+DungeonHealthSlider:OnChanged(function(Value)
+	dungeonSafetyThreshold = Value
+end)
+
+local DungeonSafeDistanceSlider = Tabs.Dungeon:AddSlider("DungeonSafeDistanceSlider", {
+	Title = "Safety Distance",
+	Description = "Distance to use when health is low.",
+	Default = 50,
+	Min = 0,
+	Max = 200,
+	Rounding = 1,
+	Callback = function(Value)
+		dungeonSafeDistance = Value
+	end
+})
+
+DungeonSafeDistanceSlider:OnChanged(function(Value)
+	dungeonSafeDistance = Value
+end)
+
 -- ==========================================
 -- AUTO KEY TAB
 -- ==========================================
@@ -968,10 +1134,16 @@ local KeysInput = Tabs.AutoKey:AddInput("KeysInput", {
 	Callback = function(Value)
 		selectedKeys = {}
 		if Value then
+			local numMap = {
+				["1"]="One", ["2"]="Two", ["3"]="Three", ["4"]="Four", ["5"]="Five",
+				["6"]="Six", ["7"]="Seven", ["8"]="Eight", ["9"]="Nine", ["0"]="Zero"
+			}
 			for keyStr in string.gmatch(Value, "[^,]+") do
 				local key = keyStr:match("^%s*(.-)%s*$")
 				if key and key ~= "" then
-					if #key == 1 then
+					if numMap[key] then
+						key = numMap[key]
+					elseif #key == 1 then
 						key = string.upper(key)
 					end
 					selectedKeys[key] = true
@@ -1105,3 +1277,9 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 Window:SelectTab(1)
 
 SaveManager:LoadAutoloadConfig()
+
+
+
+	
+
+	
