@@ -1271,6 +1271,16 @@ SaveManager:SetIgnoreIndexes({})
 InterfaceManager:SetFolder("AutoTeleportSettings")
 SaveManager:SetFolder("AutoTeleportSettings/Configs")
 
+local isAutoCloseGui = false
+local AutoCloseToggle = Tabs.Settings:AddToggle("AutoCloseToggle", {
+	Title = "Auto Close GUI on Execute", 
+	Default = false,
+	Description = "Automatically minimizes the script UI after loading."
+})
+AutoCloseToggle:OnChanged(function(Value)
+	isAutoCloseGui = Value
+end)
+
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
@@ -1278,8 +1288,10 @@ Window:SelectTab(1)
 
 SaveManager:LoadAutoloadConfig()
 
-
-
-	
-
-	
+if isAutoCloseGui then
+	task.delay(0.5, function()
+		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightControl, false, game)
+		task.wait(0.01)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightControl, false, game)
+	end)
+end
