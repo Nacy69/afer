@@ -200,7 +200,7 @@ local lastKuramaSummonTime = 0
 local kuramaSpawnTime = 0
 local wasKuramaAlive = false
 
-local isKuramaIgrosPriorityEnabled = true
+local kuramaPriorityBosses = {["Igros"] = true}
 local isDungeonAutoEnabled = false
 
 -- Auto-load waypoints from URL on startup
@@ -265,82 +265,91 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if not rootPart then return end
 	
 	if isKuramaAutoEnabled then
-		-- Check for Igros priority
-		if isKuramaIgrosPriorityEnabled then
-			local igrosTimeLabel = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Boards") and workspace.Map.Boards:FindFirstChild("BossRates") and workspace.Map.Boards.BossRates:FindFirstChild("Board") and workspace.Map.Boards.BossRates.Board:FindFirstChild("Display") and workspace.Map.Boards.BossRates.Board.Display:FindFirstChild("ScrollingFrame") and workspace.Map.Boards.BossRates.Board.Display.ScrollingFrame:FindFirstChild("Igros") and workspace.Map.Boards.BossRates.Board.Display.ScrollingFrame.Igros:FindFirstChild("Time")
-			
-			if igrosTimeLabel and igrosTimeLabel:IsA("TextLabel") and igrosTimeLabel.Text == "Spawned" then
-				local targetCFrame = nil
-				local isFighting = false
+		-- Check for Priority Bosses
+		local priorityTargetCFrame = nil
+		local isPriorityFighting = false
+		
+		for bossName, isEnabled in pairs(kuramaPriorityBosses) do
+			if isEnabled then
+				local scrollingFrame = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Boards") and workspace.Map.Boards:FindFirstChild("BossRates") and workspace.Map.Boards.BossRates:FindFirstChild("Board") and workspace.Map.Boards.BossRates.Board:FindFirstChild("Display") and workspace.Map.Boards.BossRates.Board.Display:FindFirstChild("ScrollingFrame")
 				
-				local igros = clientEntities:FindFirstChild("Igros")
-				if igros then
-					local humanoid = igros:FindFirstChildOfClass("Humanoid")
-					if not humanoid or humanoid.Health > 0 then
-						targetCFrame = getTargetCFrame(igros)
-						isFighting = true
-					end
-				end
-				
-				if not targetCFrame then
-					-- Teleport to waypoint first so Igros can render
-					local igrosWaypoint = nil
-					for _, wp in ipairs(bossWaypoints) do
-						if wp.Name == "Igros" then igrosWaypoint = wp break end
-					end
-					if not igrosWaypoint then
-						for _, wp in ipairs(customWaypoints) do
-							if wp.Name == "Igros" then igrosWaypoint = wp break end
+				if scrollingFrame and scrollingFrame:FindFirstChild(bossName) and scrollingFrame[bossName]:FindFirstChild("Time") then
+					local timeLabel = scrollingFrame[bossName].Time
+					if timeLabel:IsA("TextLabel") and timeLabel.Text == "Spawned" then
+						local bossEntity = clientEntities:FindFirstChild(bossName)
+						if bossEntity then
+							local humanoid = bossEntity:FindFirstChildOfClass("Humanoid")
+							if not humanoid or humanoid.Health > 0 then
+								priorityTargetCFrame = getTargetCFrame(bossEntity)
+								isPriorityFighting = true
+							end
+						end
+						
+						if not priorityTargetCFrame then
+							-- Teleport to waypoint first so boss can render
+							local bossWaypoint = nil
+							for _, wp in ipairs(bossWaypoints) do
+								if wp.Name == bossName then bossWaypoint = wp break end
+							end
+							if not bossWaypoint then
+								for _, wp in ipairs(customWaypoints) do
+									if wp.Name == bossName then bossWaypoint = wp break end
+								end
+							end
+							
+							if bossWaypoint then
+								priorityTargetCFrame = CFrame.new(bossWaypoint.Position)
+							end
+						end
+						
+						if priorityTargetCFrame then
+							break -- Found a spawned priority boss, break loop to go to it
 						end
 					end
-					
-					if igrosWaypoint then
-						targetCFrame = CFrame.new(igrosWaypoint.Position)
-					end
-				end
-				
-				if targetCFrame then
-					isCurrentlyFighting = isFighting
-					local newCFrame
-					if isFighting then
-						local activePosition = teleportPosition
-						if activePosition == "Above" then
-							local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
-							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-						elseif activePosition == "Below" then
-							local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
-							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-						elseif activePosition == "Behind" then
-							local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
-							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-						else
-							local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
-							newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-						end
-					else
-						newCFrame = targetCFrame
-					end
-					
-					if movementMode == "Tween" then
-						local currentPos = rootPart.Position
-						local distance = (newCFrame.Position - currentPos).Magnitude
-						local maxMove = tweenSpeed * deltaTime
-						if distance > maxMove then
-							local direction = (newCFrame.Position - currentPos).Unit
-							local nextPos = currentPos + (direction * maxMove)
-							rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
-						else
-							rootPart.CFrame = newCFrame
-						end
-					else
-						rootPart.CFrame = newCFrame
-					end
-					
-					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-					return -- Skip Kurama logic entirely for this frame while finding/fighting Igros
 				end
 			end
+		end
+		
+		if priorityTargetCFrame then
+			isCurrentlyFighting = isPriorityFighting
+			local newCFrame
+			if isPriorityFighting then
+				local activePosition = teleportPosition
+				if activePosition == "Above" then
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				elseif activePosition == "Below" then
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				elseif activePosition == "Behind" then
+					local pos = priorityTargetCFrame.Position + (priorityTargetCFrame.LookVector * -teleportDistance)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				else
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				end
+			else
+				newCFrame = priorityTargetCFrame
+			end
+			
+			if movementMode == "Tween" then
+				local currentPos = rootPart.Position
+				local distance = (newCFrame.Position - currentPos).Magnitude
+				local maxMove = tweenSpeed * deltaTime
+				if distance > maxMove then
+					local direction = (newCFrame.Position - currentPos).Unit
+					local nextPos = currentPos + (direction * maxMove)
+					rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+				else
+					rootPart.CFrame = newCFrame
+				end
+			else
+				rootPart.CFrame = newCFrame
+			end
+			
+			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			return -- Skip Kurama logic entirely for this frame while finding/fighting priority boss
 		end
 
 		local kurama = clientEntities:FindFirstChild("Kurama")
@@ -810,14 +819,16 @@ KuramaToggle:OnChanged(function(Value)
 	isKuramaAutoEnabled = Value
 end)
 
-local KuramaIgrosPriorityToggle = Tabs.Kurama:AddToggle("KuramaIgrosPriorityToggle", {
-	Title = "Prioritize Igros", 
-	Default = true,
-	Description = "Stops Kurama farm to kill Igros if it spawns, then returns to Kurama."
+local KuramaBossPriorityDropdown = Tabs.Kurama:AddDropdown("KuramaBossPriorityDropdown", {
+	Title = "Prioritize Bosses",
+	Description = "Stops Kurama farm to kill selected bosses if they spawn, then returns.",
+	Values = {"Igros", "Puya", "GreatApe", "Crocodile", "ArmoredTitan"},
+	Multi = true,
+	Default = {"Igros"},
 })
 
-KuramaIgrosPriorityToggle:OnChanged(function(Value)
-	isKuramaIgrosPriorityEnabled = Value
+KuramaBossPriorityDropdown:OnChanged(function(Value)
+	kuramaPriorityBosses = Value
 end)
 
 local KuramaBehindToggle = Tabs.Kurama:AddToggle("KuramaBehindToggle", {
