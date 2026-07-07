@@ -1,0 +1,9 @@
+[
+  {
+    "QuestName": "Destroyer Auto Quest",
+    "NPCName": "Sharp Shooter",
+    "DialogueOption": "Destroyers",
+    "TrackerFolder": "Progress_Repeatable.Area8.2_1",
+    "TargetMob": "Destroyer"
+  }
+]
