@@ -7,6 +7,7 @@ local clientEntities = workspace:WaitForChild("ClientEntities")
 
 local WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/MobWaypoints.json" -- Replace with your raw JSON URL
 local BOSS_WAYPOINTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/BossWaypoints.json" -- Replace with your raw Boss JSON URL
+local QUESTS_URL = "https://raw.githubusercontent.com/Nacy69/afer/refs/heads/main/Quests.json" -- Replace with your raw Quests JSON URL
 
 local currentTarget = nil
 local isEnabled = false
@@ -37,6 +38,7 @@ local Tabs = {
 	Bosses = Window:AddTab({ Title = "Bosses", Icon = "skull" }),
 	Kurama = Window:AddTab({ Title = "Kurama", Icon = "box" }),
 	Dungeon = Window:AddTab({ Title = "Dungeon", Icon = "swords" }),
+	Quests = Window:AddTab({ Title = "Quests", Icon = "scroll" }),
 	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
@@ -208,6 +210,11 @@ local lastDungeonTimeLeftChangeTime = 0
 local lastDungeonStartClickTime = 0
 local dungeonSafetyThreshold = 0
 local dungeonSafeDistance = 50
+
+local isAutoQuestEnabled = false
+local lastQuestClickTime = 0
+local loadedQuests = {}
+local selectedQuest = nil
 
 -- Auto-load waypoints from URL on startup
 if WAYPOINTS_URL ~= "" and WAYPOINTS_URL ~= "PUT_YOUR_JSON_URL_HERE" then
@@ -680,6 +687,154 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		return -- Skip boss/mob farm while dungeon farm is active
 	end
 
+	if isAutoQuestEnabled and selectedQuest then
+		local playerGui = player:FindFirstChild("PlayerGui")
+		local questProgress = playerGui and playerGui:FindFirstChild("Main") and playerGui.Main:FindFirstChild("HUD") and playerGui.Main.HUD:FindFirstChild("QuestTracker") and playerGui.Main.HUD.QuestTracker:FindFirstChild("Main") and playerGui.Main.HUD.QuestTracker.Main:FindFirstChild("Holder") and playerGui.Main.HUD.QuestTracker.Main.Holder:FindFirstChild("List") and playerGui.Main.HUD.QuestTracker.Main.Holder.List:FindFirstChild(selectedQuest.TrackerFolder) and playerGui.Main.HUD.QuestTracker.Main.Holder.List[selectedQuest.TrackerFolder]:FindFirstChild("QuestBar") and playerGui.Main.HUD.QuestTracker.Main.Holder.List[selectedQuest.TrackerFolder].QuestBar:FindFirstChild("QuestBarProgressAmount")
+		
+		local hasCompletedQuest = false
+		local hasQuest = false
+
+		if questProgress and questProgress:IsA("TextLabel") then
+			hasQuest = true
+			if questProgress.ContentText:find("100%%") or questProgress.Text:find("100%%") then
+				hasCompletedQuest = true
+			end
+		end
+		
+		if not hasQuest or hasCompletedQuest then
+			local npc = workspace:FindFirstChild("Quests") and workspace.Quests:FindFirstChild(selectedQuest.NPCName)
+			if npc then
+				local targetCFrame
+				if npc:IsA("Model") then
+					local root = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+					if root then targetCFrame = root.CFrame * CFrame.new(3, 0, 0) end
+				elseif npc:IsA("BasePart") then
+					targetCFrame = npc.CFrame * CFrame.new(3, 0, 0)
+				end
+				
+				if targetCFrame then
+					rootPart.CFrame = targetCFrame
+					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+					
+					if os.clock() - lastQuestClickTime > 2 then
+						lastQuestClickTime = os.clock()
+						
+						local prompt = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+						if prompt then
+							if type(fireproximityprompt) == "function" then
+								pcall(function() fireproximityprompt(prompt, 1, true) end)
+								pcall(function() fireproximityprompt(prompt) end)
+							end
+						end
+						VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+						task.delay(0.2, function()
+							VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+						end)
+						
+						task.delay(0.5, function()
+							local dialogueOptions = playerGui and playerGui:FindFirstChild("Main") and playerGui.Main:FindFirstChild("HUD") and playerGui.Main.HUD:FindFirstChild("Dialogue") and playerGui.Main.HUD.Dialogue:FindFirstChild("Options")
+							if dialogueOptions then
+								for _, opt in ipairs(dialogueOptions:GetChildren()) do
+									local main = opt:FindFirstChild("Main")
+									local label = main and main:FindFirstChild("Label")
+									if label and label:IsA("TextLabel") and (label.Text == selectedQuest.DialogueOption or label.ContentText == selectedQuest.DialogueOption) then
+										local x = label.AbsolutePosition.X + (label.AbsoluteSize.X / 2)
+										local y = label.AbsolutePosition.Y + (label.AbsoluteSize.Y / 2) + 58
+										VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+										task.wait(0.05)
+										VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+										break
+									end
+								end
+								task.wait(0.5)
+								local template = dialogueOptions:FindFirstChild("Template")
+								local mainFrame = template and template:FindFirstChild("Main")
+								local label = mainFrame and mainFrame:FindFirstChild("Label")
+								if label and label:IsA("TextLabel") and (label.Text == "Accept" or label.ContentText == "Accept") then
+									local x = label.AbsolutePosition.X + (label.AbsoluteSize.X / 2)
+									local y = label.AbsolutePosition.Y + (label.AbsoluteSize.Y / 2) + 58
+									VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+									task.wait(0.05)
+									VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+								end
+							end
+						end)
+					end
+				end
+			end
+		else
+			local foundEntity = nil
+			for _, entity in ipairs(clientEntities:GetChildren()) do
+				if entity.Name == selectedQuest.TargetMob then
+					local humanoid = entity:FindFirstChildOfClass("Humanoid")
+					if not humanoid or humanoid.Health > 0 then
+						foundEntity = entity
+						break
+					end
+				end
+			end
+			
+			local targetCFrame
+			local isFighting = false
+			
+			if foundEntity then
+				targetCFrame = getTargetCFrame(foundEntity)
+				isFighting = true
+				isCurrentlyFighting = true
+			else
+				local destWaypoint = nil
+				for _, wp in ipairs(customWaypoints) do
+					if wp.Name == selectedQuest.TargetMob then
+						destWaypoint = wp
+						break
+					end
+				end
+				if destWaypoint then
+					targetCFrame = CFrame.new(destWaypoint.Position)
+				end
+			end
+			
+			if targetCFrame then
+				local newCFrame
+				if teleportPosition == "Above" then
+					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif teleportPosition == "Below" then
+					local pos = targetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif teleportPosition == "Behind" then
+					local pos = targetCFrame.Position + (targetCFrame.LookVector * -teleportDistance)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				else
+					local pos = targetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				end
+				
+				if movementMode == "Tween" then
+					local currentPos = rootPart.Position
+					local distance = (newCFrame.Position - currentPos).Magnitude
+					local maxMove = tweenSpeed * deltaTime
+					
+					if distance > maxMove then
+						local direction = (newCFrame.Position - currentPos).Unit
+						local nextPos = currentPos + (direction * maxMove)
+						rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+					else
+						rootPart.CFrame = newCFrame
+					end
+				else
+					rootPart.CFrame = newCFrame
+				end
+				
+				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			end
+		end
+		
+		return -- Skip boss/mob farm while Auto Quest is active
+	end
+
 	if isBossAutoEnabled then
 		if #bossWaypoints == 0 then return end
 		
@@ -1107,6 +1262,72 @@ local DungeonSafeDistanceSlider = Tabs.Dungeon:AddSlider("DungeonSafeDistanceSli
 DungeonSafeDistanceSlider:OnChanged(function(Value)
 	dungeonSafeDistance = Value
 end)
+
+-- ==========================================
+-- QUESTS TAB
+-- ==========================================
+
+local QuestToggle = Tabs.Quests:AddToggle("QuestToggle", {
+	Title = "Enable Auto Quest", 
+	Default = false,
+	Description = "Auto fetches and farms the selected quest."
+})
+
+QuestToggle:OnChanged(function(Value)
+	isAutoQuestEnabled = Value
+end)
+
+local QuestDropdown = Tabs.Quests:AddDropdown("QuestDropdown", {
+	Title = "Select Quest",
+	Description = "Select which quest to auto complete",
+	Values = {},
+	Multi = false,
+	Default = 1,
+})
+
+QuestDropdown:OnChanged(function(Value)
+	if loadedQuests[Value] then
+		selectedQuest = loadedQuests[Value]
+	end
+end)
+
+if QUESTS_URL ~= "" and QUESTS_URL ~= "PUT_YOUR_QUESTS_JSON_URL_HERE" then
+	task.spawn(function()
+		local success, res = pcall(function()
+			return game:HttpGet(QUESTS_URL)
+		end)
+		if success and res then
+			local decodeSuccess, decoded = pcall(function()
+				return HttpService:JSONDecode(res)
+			end)
+			if decodeSuccess and type(decoded) == "table" then
+				loadedQuests = {}
+				local questNames = {}
+				
+				for _, q in ipairs(decoded) do
+					if q.QuestName and q.NPCName and q.TrackerFolder and q.TargetMob then
+						loadedQuests[q.QuestName] = q
+						table.insert(questNames, q.QuestName)
+					end
+				end
+				
+				table.sort(questNames)
+				QuestDropdown:SetValues(questNames)
+				
+				if #questNames > 0 then
+					QuestDropdown:SetValue(questNames[1])
+					selectedQuest = loadedQuests[questNames[1]]
+				end
+				
+				Fluent:Notify({ Title = "Success", Content = "Loaded " .. #questNames .. " online quests!", Duration = 3 })
+			else
+				Fluent:Notify({ Title = "Error", Content = "Failed to parse online quests JSON.", Duration = 5 })
+			end
+		else
+			Fluent:Notify({ Title = "Error", Content = "Failed to fetch online quests.", Duration = 5 })
+		end
+	end)
+end
 
 -- ==========================================
 -- AUTO KEY TAB
