@@ -12,5 +12,12 @@
     "DialogueOption": "Menos Grande",
     "TrackerFolder": "Progress_Repeatable.Area9.2_1",
     "TargetMob": "Menos"
+  },
+  {
+    "QuestName": "White Plant Auto Quest",
+    "NPCName": "Blossom",
+    "DialogueOption": "White Plants",
+    "TrackerFolder": "Progress_Repeatable.Area10.1_1",
+    "TargetMob": "WhitePlant"
   }
 ]
