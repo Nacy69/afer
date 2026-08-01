@@ -40,6 +40,7 @@ local Tabs = {
 	Dungeon = Window:AddTab({ Title = "Dungeon", Icon = "swords" }),
 	Quests = Window:AddTab({ Title = "Quests", Icon = "scroll" }),
 	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
+	AutoTitan = Window:AddTab({ Title = "Auto Titan", Icon = "zap" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
 
@@ -188,6 +189,19 @@ local lastSpawnVisitTime = 0
 local spawnVisitDelay = 0.1
 local customWaypoints = {}
 local bossWaypoints = {}
+-- ==========================================
+-- AUTO TITAN STATE
+-- ==========================================
+local isAutoTitanEnabled = false
+-- These are the only two targets. No config needed — pure carnage.
+local TITAN_TARGETS = { ["FoundingTitan"] = true, ["RumblingColossal"] = true }
+local titanTeleportDistance = 5
+local titanTeleportPosition = "Above"
+local titanMovementMode = "Tween"
+local isTitanSkillEnabled = false
+local titanSkillKeys = {}
+local titanSkillDelay = 0.1
+
 local isBossAutoEnabled = false
 local selectedBosses = {}
 local currentBossIndex = 1
@@ -271,6 +285,68 @@ end
 -- Continuous RenderStepped Loop for smooth tweening/teleporting
 RunService.RenderStepped:Connect(function(deltaTime)
 	isCurrentlyFighting = false
+
+	-- ══════════════════════════════════════════
+	-- AUTO TITAN — ABSOLUTE HIGHEST PRIORITY
+	-- Kills FoundingTitan & RumblingColossal first,
+	-- no questions asked, everything else can wait.
+	-- ══════════════════════════════════════════
+	if isAutoTitanEnabled then
+		local character = player.Character
+		if character then
+			local rootPart = character:FindFirstChild("HumanoidRootPart")
+			if rootPart then
+				local titanTarget = nil
+				-- Scan ClientEntities for any living titan target
+				for _, entity in ipairs(clientEntities:GetChildren()) do
+					if TITAN_TARGETS[entity.Name] then
+						local humanoid = entity:FindFirstChildOfClass("Humanoid")
+						if not humanoid or humanoid.Health > 0 then
+							titanTarget = entity
+							break
+						end
+					end
+				end
+				
+				if titanTarget then
+					local targetCFrame = getTargetCFrame(titanTarget)
+					if targetCFrame then
+						isCurrentlyFighting = true
+						local pos
+						if titanTeleportPosition == "Above" then
+							pos = targetCFrame.Position + Vector3.new(0, titanTeleportDistance, 0)
+						elseif titanTeleportPosition == "Below" then
+							pos = targetCFrame.Position + Vector3.new(0, -titanTeleportDistance, 0)
+						elseif titanTeleportPosition == "Behind" then
+							pos = targetCFrame.Position + (targetCFrame.LookVector * -titanTeleportDistance)
+						else
+							pos = targetCFrame.Position + Vector3.new(0, titanTeleportDistance, 0)
+						end
+						local newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+						
+						if titanMovementMode == "Tween" then
+							local currentPos = rootPart.Position
+							local dist = (newCFrame.Position - currentPos).Magnitude
+							local maxMove = tweenSpeed * deltaTime
+							if dist > maxMove then
+								local dir = (newCFrame.Position - currentPos).Unit
+								rootPart.CFrame = CFrame.new(currentPos + dir * maxMove) * newCFrame.Rotation
+							else
+								rootPart.CFrame = newCFrame
+							end
+						else
+							rootPart.CFrame = newCFrame
+						end
+						
+						rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+						rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+						return -- nuke everything else this frame
+					end
+				end
+			end
+		end
+	end
+	-- ══════════════════════════════════════════
 	local character = player.Character
 	if not character then return end
 	
@@ -1328,6 +1404,177 @@ if QUESTS_URL ~= "" and QUESTS_URL ~= "PUT_YOUR_QUESTS_JSON_URL_HERE" then
 		end
 	end)
 end
+
+-- ==========================================
+-- AUTO TITAN TAB
+-- ==========================================
+
+local AutoTitanToggle = Tabs.AutoTitan:AddToggle("AutoTitanToggle", {
+	Title = "Enable Auto Titan",
+	Default = false,
+	Description = "HIGHEST PRIORITY — Locks onto FoundingTitan & RumblingColossal above all other modes."
+})
+
+AutoTitanToggle:OnChanged(function(Value)
+	isAutoTitanEnabled = Value
+	if Value then
+		Fluent:Notify({ Title = "⚠ AUTO TITAN ACTIVE", Content = "Hunting FoundingTitan & RumblingColossal — all other modes suspended while titans are alive.", Duration = 5 })
+	end
+end)
+
+-- Dropdown for Titan Position
+local TitanPositionDropdown = Tabs.AutoTitan:AddDropdown("TitanPositionDropdown", {
+	Title = "Titan Target Position",
+	Description = "Where to hover relative to the titan",
+	Values = {"Above", "Below", "Behind"},
+	Multi = false,
+	Default = 1,
+})
+
+TitanPositionDropdown:OnChanged(function(Value)
+	titanTeleportPosition = Value
+end)
+
+-- Dropdown for Titan Movement Mode
+local TitanMovementDropdown = Tabs.AutoTitan:AddDropdown("TitanMovementDropdown", {
+	Title = "Titan Movement Mode",
+	Description = "How you move to the titan. Tween glides, Instant snaps.",
+	Values = {"Instant", "Tween"},
+	Multi = false,
+	Default = 2,
+})
+
+TitanMovementDropdown:OnChanged(function(Value)
+	titanMovementMode = Value
+end)
+
+-- Slider for Titan Distance
+local TitanDistanceSlider = Tabs.AutoTitan:AddSlider("TitanDistanceSlider", {
+	Title = "Titan Attack Distance",
+	Description = "Distance from the titan (studs)",
+	Default = 5,
+	Min = 0,
+	Max = 200,
+	Rounding = 1,
+	Callback = function(Value)
+		titanTeleportDistance = Value
+	end
+})
+
+TitanDistanceSlider:OnChanged(function(Value)
+	titanTeleportDistance = Value
+end)
+
+-- Input for exact Titan Distance
+local TitanDistanceInput = Tabs.AutoTitan:AddInput("TitanDistanceInput", {
+	Title = "Type Exact Titan Attack Distance",
+	Default = "5",
+	Placeholder = "Enter distance...",
+	Numeric = true,
+	Finished = true,
+	Callback = function(Value)
+		local num = tonumber(Value)
+		if num then
+			titanTeleportDistance = num
+			TitanDistanceSlider:SetValue(num)
+		end
+	end
+})
+
+Tabs.AutoTitan:AddParagraph({
+	Title = "Targets",
+	Content = "• FoundingTitan\n• RumblingColossal"
+})
+
+Tabs.AutoTitan:AddParagraph({
+	Title = "Priority",
+	Content = "This mode runs BEFORE Kurama, Dungeon, Quest, Boss, and normal Mob farm. When a titan is alive, every other mode yields."
+})
+
+-- Titan Skill Toggle
+local TitanSkillToggle = Tabs.AutoTitan:AddToggle("TitanSkillToggle", {
+	Title = "Enable Auto Skills",
+	Default = false,
+	Description = "Auto-presses skill keys while actively fighting a titan."
+})
+
+TitanSkillToggle:OnChanged(function(Value)
+	isTitanSkillEnabled = Value
+end)
+
+-- Titan Skill Keys Input
+local TitanSkillKeysInput = Tabs.AutoTitan:AddInput("TitanSkillKeysInput", {
+	Title = "Skill Keys",
+	Description = "Keys to spam during titan fight. Comma-separated (e.g., Z, X, C, One, F1)",
+	Default = "",
+	Placeholder = "e.g., Z, X, C",
+	Numeric = false,
+	Finished = true,
+	Callback = function(Value)
+		titanSkillKeys = {}
+		if Value then
+			local numMap = {
+				["1"]="One", ["2"]="Two", ["3"]="Three", ["4"]="Four", ["5"]="Five",
+				["6"]="Six", ["7"]="Seven", ["8"]="Eight", ["9"]="Nine", ["0"]="Zero"
+			}
+			for keyStr in string.gmatch(Value, "[^,]+") do
+				local key = keyStr:match("^%s*(.-)%s*$")
+				if key and key ~= "" then
+					if numMap[key] then
+						key = numMap[key]
+					elseif #key == 1 then
+						key = string.upper(key)
+					end
+					titanSkillKeys[key] = true
+				end
+			end
+		end
+	end
+})
+
+-- Titan Skill Delay Slider
+local TitanSkillDelaySlider = Tabs.AutoTitan:AddSlider("TitanSkillDelaySlider", {
+	Title = "Skill Press Delay",
+	Description = "Delay between each skill cycle (seconds)",
+	Default = 0.1,
+	Min = 0.01,
+	Max = 5,
+	Rounding = 2,
+	Callback = function(Value)
+		titanSkillDelay = Value
+	end
+})
+
+TitanSkillDelaySlider:OnChanged(function(Value)
+	titanSkillDelay = Value
+end)
+
+-- Titan Skill Loop — only fires when titan mode is on AND actively fighting
+task.spawn(function()
+	while true do
+		if isTitanSkillEnabled and isAutoTitanEnabled and isCurrentlyFighting then
+			local pressedAny = false
+			for key, isSelected in pairs(titanSkillKeys) do
+				if isSelected then
+					pressedAny = true
+					local keyCode = Enum.KeyCode[key]
+					if keyCode then
+						VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+						task.wait(0.01)
+						VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+					end
+				end
+			end
+			if pressedAny then
+				task.wait(titanSkillDelay)
+			else
+				task.wait(0.1)
+			end
+		else
+			task.wait(0.1)
+		end
+	end
+end)
 
 -- ==========================================
 -- AUTO KEY TAB
