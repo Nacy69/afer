@@ -215,6 +215,7 @@ local kuramaTeleportDistance = 5
 local lastKuramaSummonTime = 0
 local kuramaSpawnTime = 0
 local wasKuramaAlive = false
+local kuramaAimLock = false
 
 local kuramaPriorityBosses = {["Igros"] = true}
 local isDungeonAutoEnabled = false
@@ -510,6 +511,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
 				
 				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+				
+				-- Camera aim lock: always face Kurama
+				if kuramaAimLock then
+					local camera = workspace.CurrentCamera
+					if camera then
+						camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetCFrame.Position)
+					end
+				end
 			end
 		else
 			wasKuramaAlive = false
@@ -1278,6 +1287,16 @@ local KuramaPressEToggle = Tabs.Kurama:AddToggle("KuramaPressEToggle", {
 local kuramaAlwaysPressE = true
 KuramaPressEToggle:OnChanged(function(Value)
 	kuramaAlwaysPressE = Value
+end)
+
+local KuramaAimLockToggle = Tabs.Kurama:AddToggle("KuramaAimLockToggle", {
+	Title = "Camera Aim Lock", 
+	Default = false,
+	Description = "Locks camera to always face Kurama while farming."
+})
+
+KuramaAimLockToggle:OnChanged(function(Value)
+	kuramaAimLock = Value
 end)
 
 task.spawn(function()
