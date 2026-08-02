@@ -35,14 +35,98 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
 	Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+	Training = Window:AddTab({ Title = "Training", Icon = "dumbbell" }),
 	Bosses = Window:AddTab({ Title = "Bosses", Icon = "skull" }),
 	Kurama = Window:AddTab({ Title = "Kurama", Icon = "box" }),
+	Brole = Window:AddTab({ Title = "Brole", Icon = "box" }),
 	Dungeon = Window:AddTab({ Title = "Dungeon", Icon = "swords" }),
 	Quests = Window:AddTab({ Title = "Quests", Icon = "scroll" }),
 	AutoKey = Window:AddTab({ Title = "Auto Key", Icon = "keyboard" }),
 	AutoTitan = Window:AddTab({ Title = "Auto Titan", Icon = "zap" }),
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
+
+-- ==========================================
+-- TRAINING TAB SETUP
+-- ==========================================
+local autoEquipTool = "None"
+local isAutoEquipEnabled = false
+local isAutoTrainEnabled = false
+
+local toolKeybinds = {
+	["Strength"] = Enum.KeyCode.One,
+	["Durability"] = Enum.KeyCode.Two,
+	["Chakra"] = Enum.KeyCode.Three,
+	["Sword"] = Enum.KeyCode.Four
+}
+
+local function equipSelectedTool()
+	if isAutoEquipEnabled and autoEquipTool ~= "None" then
+		local key = toolKeybinds[autoEquipTool]
+		if key then
+			-- Send the key press to equip the tool
+			VirtualInputManager:SendKeyEvent(true, key, false, game)
+			task.wait(0.1)
+			VirtualInputManager:SendKeyEvent(false, key, false, game)
+		end
+	end
+end
+
+local AutoEquipToggle = Tabs.Training:AddToggle("AutoEquipToggle", {
+	Title = "Enable Auto Equip",
+	Default = false,
+	Description = "Automatically equips the selected tool on spawn"
+})
+
+AutoEquipToggle:OnChanged(function(Value)
+	isAutoEquipEnabled = Value
+	if isAutoEquipEnabled then
+		equipSelectedTool()
+	end
+end)
+
+local AutoEquipDropdown = Tabs.Training:AddDropdown("AutoEquipDropdown", {
+	Title = "Training Tool",
+	Description = "Select the tool to auto-equip",
+	Values = {"None", "Strength", "Durability", "Chakra", "Sword"},
+	Multi = false,
+	Default = 1,
+})
+
+AutoEquipDropdown:OnChanged(function(Value)
+	autoEquipTool = Value
+	if isAutoEquipEnabled then
+		equipSelectedTool()
+	end
+end)
+
+local AutoTrainToggle = Tabs.Training:AddToggle("AutoTrainToggle", {
+	Title = "Enable Auto Train (Auto Click)",
+	Default = false,
+	Description = "Automatically clicks to train the equipped tool"
+})
+
+AutoTrainToggle:OnChanged(function(Value)
+	isAutoTrainEnabled = Value
+end)
+
+player.CharacterAdded:Connect(function(char)
+	task.spawn(function()
+		char:WaitForChild("HumanoidRootPart", 10)
+		task.wait(2) -- Wait for character to fully initialize
+		equipSelectedTool()
+	end)
+end)
+
+task.spawn(function()
+	while task.wait(0.1) do
+		if isAutoTrainEnabled then
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+			task.wait(0.05)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+		end
+	end
+end)
 
 -- Toggle for auto teleport
 local EnableToggle = Tabs.Main:AddToggle("EnableToggle", {
@@ -171,6 +255,17 @@ LookDownToggle:OnChanged(function(Value)
 	isAutoLookDownEnabled = Value
 end)
 
+local isAimLockEnabled = false
+local AimLockToggle = Tabs.Main:AddToggle("AimLockToggle", {
+	Title = "Auto Aim Lock", 
+	Default = false,
+	Description = "Automatically locks camera to the target you are fighting"
+})
+
+AimLockToggle:OnChanged(function(Value)
+	isAimLockEnabled = Value
+end)
+
 RunService.RenderStepped:Connect(function()
 	if isAutoLookDownEnabled then
 		local camera = workspace.CurrentCamera
@@ -218,6 +313,18 @@ local wasKuramaAlive = false
 local kuramaAimLock = false
 
 local kuramaPriorityBosses = {["Igros"] = true}
+
+local isBroleAutoEnabled = false
+local broleSafetyThreshold = 30
+local broleHighDistance = 100
+local broleAlwaysBehind = false
+local broleTeleportDistance = 5
+local lastBroleSummonTime = 0
+local broleSpawnTime = 0
+local wasBroleAlive = false
+local broleAimLock = false
+
+local brolePriorityBosses = {["Igros"] = true}
 local isDungeonAutoEnabled = false
 local lastDungeonEnterTime = 0
 local lastDungeonTimeLeftText = ""
@@ -469,26 +576,21 @@ RunService.RenderStepped:Connect(function(deltaTime)
 				local healthPercent = playerHumanoid and (playerHumanoid.Health / playerHumanoid.MaxHealth) * 100 or 100
 				
 				local newCFrame
-				if healthPercent < kuramaSafetyThreshold then
-					-- Safety High
-					local pos = targetCFrame.Position + Vector3.new(0, kuramaHighDistance, 0)
+				local currentDistance = (healthPercent < kuramaSafetyThreshold) and kuramaHighDistance or kuramaTeleportDistance
+				local activePosition = kuramaAlwaysBehind and "Behind" or teleportPosition
+				
+				if activePosition == "Above" then
+					local pos = targetCFrame.Position + Vector3.new(0, currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif activePosition == "Below" then
+					local pos = targetCFrame.Position + Vector3.new(0, -currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif activePosition == "Behind" then
+					local pos = targetCFrame.Position + (targetCFrame.LookVector * -currentDistance)
 					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
 				else
-					-- Normal teleport
-					local activePosition = kuramaAlwaysBehind and "Behind" or teleportPosition
-					if activePosition == "Above" then
-						local pos = targetCFrame.Position + Vector3.new(0, kuramaTeleportDistance, 0)
-						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-					elseif activePosition == "Below" then
-						local pos = targetCFrame.Position + Vector3.new(0, -kuramaTeleportDistance, 0)
-						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-					elseif activePosition == "Behind" then
-						local pos = targetCFrame.Position + (targetCFrame.LookVector * -kuramaTeleportDistance)
-						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-					else
-						local pos = targetCFrame.Position + Vector3.new(0, kuramaTeleportDistance, 0)
-						newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
-					end
+					local pos = targetCFrame.Position + Vector3.new(0, currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
 				end
 				
 				local activeMovement = (kuramaAlwaysBehind and healthPercent >= kuramaSafetyThreshold) and "Instant" or movementMode
@@ -586,6 +688,235 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			end
 		end
 		return -- Skip boss/mob farm while Kurama farm is active
+	end
+
+	if isBroleAutoEnabled then
+		-- Check for Priority Bosses
+		local priorityTargetCFrame = nil
+		local isPriorityFighting = false
+		
+		for bossName, isEnabled in pairs(brolePriorityBosses) do
+			if isEnabled then
+				local scrollingFrame = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Boards") and workspace.Map.Boards:FindFirstChild("BossRates") and workspace.Map.Boards.BossRates:FindFirstChild("Board") and workspace.Map.Boards.BossRates.Board:FindFirstChild("Display") and workspace.Map.Boards.BossRates.Board.Display:FindFirstChild("ScrollingFrame")
+				
+				if scrollingFrame and scrollingFrame:FindFirstChild(bossName) and scrollingFrame[bossName]:FindFirstChild("Time") then
+					local timeLabel = scrollingFrame[bossName].Time
+					if timeLabel:IsA("TextLabel") and timeLabel.Text == "Spawned" then
+						local bossEntity = clientEntities:FindFirstChild(bossName)
+						if bossEntity then
+							local humanoid = bossEntity:FindFirstChildOfClass("Humanoid")
+							if not humanoid or humanoid.Health > 0 then
+								priorityTargetCFrame = getTargetCFrame(bossEntity)
+								isPriorityFighting = true
+							end
+						end
+						
+						if not priorityTargetCFrame then
+							-- Teleport to waypoint first so boss can render
+							local bossWaypoint = nil
+							for _, wp in ipairs(bossWaypoints) do
+								if wp.Name == bossName then bossWaypoint = wp break end
+							end
+							if not bossWaypoint then
+								for _, wp in ipairs(customWaypoints) do
+									if wp.Name == bossName then bossWaypoint = wp break end
+								end
+							end
+							
+							if bossWaypoint then
+								priorityTargetCFrame = CFrame.new(bossWaypoint.Position)
+							end
+						end
+						
+						if priorityTargetCFrame then
+							break -- Found a spawned priority boss, break loop to go to it
+						end
+					end
+				end
+			end
+		end
+		
+		if priorityTargetCFrame then
+			isCurrentlyFighting = isPriorityFighting
+			local newCFrame
+			if isPriorityFighting then
+				local activePosition = teleportPosition
+				if activePosition == "Above" then
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				elseif activePosition == "Below" then
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, -teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				elseif activePosition == "Behind" then
+					local pos = priorityTargetCFrame.Position + (priorityTargetCFrame.LookVector * -teleportDistance)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				else
+					local pos = priorityTargetCFrame.Position + Vector3.new(0, teleportDistance, 0)
+					newCFrame = CFrame.lookAt(pos, priorityTargetCFrame.Position)
+				end
+			else
+				newCFrame = priorityTargetCFrame
+			end
+			
+			if movementMode == "Tween" then
+				local currentPos = rootPart.Position
+				local distance = (newCFrame.Position - currentPos).Magnitude
+				local maxMove = tweenSpeed * deltaTime
+				if distance > maxMove then
+					local direction = (newCFrame.Position - currentPos).Unit
+					local nextPos = currentPos + (direction * maxMove)
+					rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+				else
+					rootPart.CFrame = newCFrame
+				end
+			else
+				rootPart.CFrame = newCFrame
+			end
+			
+			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			return -- Skip Brole logic entirely for this frame while finding/fighting priority boss
+		end
+
+		local brole = clientEntities:FindFirstChild("Brole")
+		local isBroleAlive = false
+		if brole then
+			local humanoid = brole:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health > 0 then
+				isBroleAlive = true
+			end
+		end
+
+		if isBroleAlive then
+			if not wasBroleAlive then
+				broleSpawnTime = os.clock()
+				wasBroleAlive = true
+			end
+
+			if os.clock() - broleSpawnTime < 3 then
+				return -- Wait 3 seconds before locking on
+			end
+
+			local humanoid = brole:FindFirstChildOfClass("Humanoid")
+			local targetCFrame = getTargetCFrame(brole)
+			if targetCFrame then
+				isCurrentlyFighting = true
+				local playerHumanoid = character:FindFirstChildOfClass("Humanoid")
+				local healthPercent = playerHumanoid and (playerHumanoid.Health / playerHumanoid.MaxHealth) * 100 or 100
+				
+				local newCFrame
+				local currentDistance = (healthPercent < broleSafetyThreshold) and broleHighDistance or broleTeleportDistance
+				local activePosition = broleAlwaysBehind and "Behind" or teleportPosition
+				
+				if activePosition == "Above" then
+					local pos = targetCFrame.Position + Vector3.new(0, currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif activePosition == "Below" then
+					local pos = targetCFrame.Position + Vector3.new(0, -currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				elseif activePosition == "Behind" then
+					local pos = targetCFrame.Position + (targetCFrame.LookVector * -currentDistance)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				else
+					local pos = targetCFrame.Position + Vector3.new(0, currentDistance, 0)
+					newCFrame = CFrame.lookAt(pos, targetCFrame.Position)
+				end
+				
+				local activeMovement = (broleAlwaysBehind and healthPercent >= broleSafetyThreshold) and "Instant" or movementMode
+				
+				if activeMovement == "Tween" then
+					local currentPos = rootPart.Position
+					local distance = (newCFrame.Position - currentPos).Magnitude
+					local maxMove = tweenSpeed * deltaTime
+					
+					if distance > maxMove then
+						local direction = (newCFrame.Position - currentPos).Unit
+						local nextPos = currentPos + (direction * maxMove)
+						rootPart.CFrame = CFrame.new(nextPos) * newCFrame.Rotation
+					else
+						rootPart.CFrame = newCFrame
+					end
+				else
+					rootPart.CFrame = newCFrame
+				end
+				
+				rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+				
+				-- Camera aim lock: always face Brole
+				if broleAimLock then
+					local camera = workspace.CurrentCamera
+					if camera then
+						camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetCFrame.Position)
+					end
+				end
+			end
+		else
+			wasBroleAlive = false
+
+			if os.clock() - lastBroleSummonTime < 20 then
+				return -- Wait in the arena for Brole to spawn, don't teleport back to Totem
+			end
+			
+			local mapFolder = workspace:FindFirstChild("Map")
+			local totem = nil
+			if mapFolder then
+				local arenas = mapFolder:FindFirstChild("Arenas")
+				if arenas and arenas:FindFirstChild("Boss") and arenas.Boss:FindFirstChild("BroleArena") then
+					totem = arenas.Boss.BroleArena:FindFirstChild("Totem")
+				end
+			end
+			
+			if totem then
+				local targetCFrame
+				if totem:IsA("Model") then
+					local part = totem.PrimaryPart or totem:FindFirstChildWhichIsA("BasePart")
+					if part then targetCFrame = part.CFrame end
+				elseif totem:IsA("BasePart") then
+					targetCFrame = totem.CFrame
+				else
+					targetCFrame = totem:GetPivot()
+				end
+				
+				if targetCFrame then
+					local distance = (rootPart.Position - targetCFrame.Position).Magnitude
+					
+					if movementMode == "Tween" then
+						local maxMove = tweenSpeed * deltaTime
+						if distance > maxMove then
+							local direction = (targetCFrame.Position - rootPart.Position).Unit
+							local nextPos = rootPart.Position + (direction * maxMove)
+							rootPart.CFrame = CFrame.new(nextPos) * targetCFrame.Rotation
+						else
+							rootPart.CFrame = targetCFrame
+						end
+					else
+						rootPart.CFrame = targetCFrame
+					end
+					
+					rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+					
+					if distance <= 15 then
+						local prompt = totem:FindFirstChildWhichIsA("ProximityPrompt", true)
+						if prompt then
+							if type(fireproximityprompt) == "function" then
+								pcall(function() fireproximityprompt(prompt, 1, true) end)
+								pcall(function() fireproximityprompt(prompt) end)
+							end
+							
+							VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+							task.delay(0.2, function()
+								VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+							end)
+							
+							lastBroleSummonTime = os.clock()
+						end
+					end
+				end
+			end
+		end
+		return -- Skip boss/mob farm while Brole farm is active
 	end
 
 	if isDungeonAutoEnabled then
@@ -1014,6 +1345,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			
 			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 			rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+			if isAimLockEnabled and isFighting and targetCFrame then
+				local camera = workspace.CurrentCamera
+				if camera then
+					camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetCFrame.Position)
+				end
+			end
 		end
 		
 		return -- Skip normal mob farm while boss farm is active
@@ -1111,6 +1449,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		
 		rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 		rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+		if isAimLockEnabled and isFighting and targetCFrame then
+			local camera = workspace.CurrentCamera
+			if camera then
+				camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetCFrame.Position)
+			end
+		end
 	end
 end)
 
@@ -1302,6 +1647,139 @@ end)
 task.spawn(function()
 	while true do
 		if isKuramaAutoEnabled and kuramaAlwaysPressE then
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+			task.wait(0.01)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+			task.wait(0.1)
+		else
+			task.wait(0.1)
+		end
+	end
+end)
+
+-- ==========================================
+-- BROLE TAB
+-- ==========================================
+
+local BroleToggle = Tabs.Brole:AddToggle("BroleToggle", {
+	Title = "Enable Auto Brole", 
+	Default = false,
+	Description = "Continuously teleports to Brole"
+})
+
+BroleToggle:OnChanged(function(Value)
+	isBroleAutoEnabled = Value
+end)
+
+local BroleBossPriorityDropdown = Tabs.Brole:AddDropdown("BroleBossPriorityDropdown", {
+	Title = "Prioritize Bosses",
+	Description = "Stops Brole farm to kill selected bosses if they spawn, then returns.",
+	Values = {"Igros", "Puya", "GreatApe", "Crocodile", "ArmoredTitan"},
+	Multi = true,
+	Default = {"Igros"},
+})
+
+BroleBossPriorityDropdown:OnChanged(function(Value)
+	brolePriorityBosses = Value
+end)
+
+local BroleBehindToggle = Tabs.Brole:AddToggle("BroleBehindToggle", {
+	Title = "Always Behind (Auto Dodge)", 
+	Default = false,
+	Description = "Overrides settings to instantly teleport behind Brole at all times."
+})
+
+BroleBehindToggle:OnChanged(function(Value)
+	broleAlwaysBehind = Value
+end)
+
+local BroleDistanceSlider = Tabs.Brole:AddSlider("BroleDistanceSlider", {
+	Title = "Attack Distance",
+	Description = "Distance from Brole",
+	Default = 66,
+	Min = 0,
+	Max = 100,
+	Rounding = 1,
+	Callback = function(Value)
+		broleTeleportDistance = Value
+	end
+})
+
+BroleDistanceSlider:OnChanged(function(Value)
+	broleTeleportDistance = Value
+end)
+
+local BroleDistanceInput = Tabs.Brole:AddInput("BroleDistanceInput", {
+	Title = "Type Exact Attack Distance",
+	Default = "66",
+	Placeholder = "Enter distance...",
+	Numeric = true,
+	Finished = true,
+	Callback = function(Value)
+		local num = tonumber(Value)
+		if num then
+			broleTeleportDistance = num
+			BroleDistanceSlider:SetValue(num)
+		end
+	end
+})
+
+local BroleHealthSlider = Tabs.Brole:AddSlider("BroleHealthSlider", {
+	Title = "Safety Health Threshold (%)",
+	Description = "If health drops below this %, teleports high above Brole.",
+	Default = 30,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Callback = function(Value)
+		broleSafetyThreshold = Value
+	end
+})
+
+BroleHealthSlider:OnChanged(function(Value)
+	broleSafetyThreshold = Value
+end)
+
+local BroleHighDistanceSlider = Tabs.Brole:AddSlider("BroleHighDistanceSlider", {
+	Title = "Safety High Distance",
+	Description = "How high to teleport when health is low.",
+	Default = 150,
+	Min = 50,
+	Max = 1000,
+	Rounding = 0,
+	Callback = function(Value)
+		broleHighDistance = Value
+	end
+})
+
+BroleHighDistanceSlider:OnChanged(function(Value)
+	broleHighDistance = Value
+end)
+
+local BrolePressEToggle = Tabs.Brole:AddToggle("BrolePressEToggle", {
+	Title = "Always Press E", 
+	Default = true,
+	Description = "Automatically presses E while Brole farm is on."
+})
+
+local broleAlwaysPressE = true
+BrolePressEToggle:OnChanged(function(Value)
+	broleAlwaysPressE = Value
+end)
+
+local BroleAimLockToggle = Tabs.Brole:AddToggle("BroleAimLockToggle", {
+	Title = "Camera Aim Lock", 
+	Default = false,
+	Description = "Locks camera to always face Brole while farming."
+})
+
+BroleAimLockToggle:OnChanged(function(Value)
+	broleAimLock = Value
+end)
+
+task.spawn(function()
+	while true do
+		if isBroleAutoEnabled and broleAlwaysPressE then
 			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
 			task.wait(0.01)
 			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
