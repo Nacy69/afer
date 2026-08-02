@@ -19,5 +19,19 @@
     "DialogueOption": "White Plants",
     "TrackerFolder": "Progress_Repeatable.Area10.1_1",
     "TargetMob": "WhitePlant"
+  },
+  {
+    "QuestName": "Saibaman Auto Quest",
+    "NPCName": "Grillin",
+    "DialogueOption": "Saibamen",
+    "TrackerFolder": "Progress_Repeatable.Area11.2_1",
+    "TargetMob": "Saibaman"
+  },
+  {
+    "QuestName": "Frieza Soldier Auto Quest",
+    "NPCName": "Grillin",
+    "DialogueOption": "Frieza Force",
+    "TrackerFolder": "Progress_Repeatable.Area11.3_1",
+    "TargetMob": "FriezaSoldier"
   }
 ]
